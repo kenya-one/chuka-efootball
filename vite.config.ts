@@ -7,9 +7,11 @@ import {VitePWA} from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => {
   // In development, base is '/'
-  // When building for production (GitHub Pages at kenyanm.github.io/chukaefootball/), base is '/chukaefootball/'
+  // When building for production (GitHub Pages at kenya-one.github.io/chuka-efootball/), base is '/chuka-efootball/'
   const isProd = mode === 'production' || process.env.NODE_ENV === 'production';
-  const base = process.env.BASE_URL || (isProd ? '/chukaefootball/' : '/');
+  let base = process.env.BASE_URL || (isProd ? '/chuka-efootball/' : '/');
+  if (!base.startsWith('/')) base = '/' + base;
+  if (!base.endsWith('/')) base = base + '/';
 
   return {
     base,

@@ -37,9 +37,14 @@ jobs:
         run: npm install --legacy-peer-deps
 
       - name: Build Production Web App
-        run: npm run build
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          if [ -z "$REPO_NAME" ]; then
+            REPO_NAME="chuka-efootball"
+          fi
+          echo "Building production bundle for repo: $REPO_NAME"
+          BASE_URL="/${REPO_NAME}/" npm run build
         env:
-          BASE_URL: '/chukaefootball/'
           VITE_APPS_SCRIPT_URL: ${{ secrets.VITE_APPS_SCRIPT_URL || secrets.VITE_APPS_SCRIPT_WEB_APP_URL || 'https://script.google.com/macros/s/AKfycbyKjY31IpwKF0wiSVP1g4oORnO7klNLZmQFkWgw81xAdBfCCJ29w-opVSPyv4RrjRpK/exec' }}
           VITE_APPS_SCRIPT_WEB_APP_URL: ${{ secrets.VITE_APPS_SCRIPT_WEB_APP_URL || secrets.VITE_APPS_SCRIPT_URL }}
           VITE_GOOGLE_SHEET_ID: ${{ secrets.VITE_GOOGLE_SHEET_ID }}

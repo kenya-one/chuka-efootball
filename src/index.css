@@ -1,0 +1,256 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   CHUKA eFOOTBALL OFFICIAL GAZETTE & INFORMATION DOCUMENT STYLING
+   Official Match Rules & University Information Pages Style System
+   ========================================================================== */
+
+.document-page-wrapper {
+  background: #ffffff;
+  font-family: 'Georgia', 'Times New Roman', Times, serif;
+  color: #111111;
+  line-height: 1.4;
+  display: flex;
+  justify-content: center;
+  padding: 1.5rem 1rem;
+  width: 100%;
+}
+
+.document {
+  max-width: 900px;
+  width: 100%;
+  background: #ffffff;
+  border: 1px solid #cccccc;
+  padding: 2rem 2.2rem 1.8rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  font-family: 'Georgia', 'Times New Roman', Times, serif;
+  color: #111111;
+  line-height: 1.4;
+}
+
+/* Header */
+.doc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  margin-bottom: 0.75rem;
+}
+
+.doc-header .logo-left img,
+.doc-header .logo-right img {
+  height: 58px;
+  width: auto;
+  display: block;
+}
+
+.doc-header .title {
+  text-align: center;
+  flex: 1;
+}
+
+.doc-header .title h1 {
+  font-size: 1.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #000000;
+  line-height: 1.2;
+}
+
+.doc-header .title .subtitle {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: #333333;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-top: 0.15rem;
+}
+
+/* Dividers */
+.doc-divider {
+  border: none;
+  border-top: 2px solid #222222;
+  margin: 0.6rem 0 0.4rem;
+}
+
+.doc-divider-light {
+  border: none;
+  border-top: 1px solid #aaaaaa;
+  margin: 0.4rem 0 1rem;
+}
+
+/* Powered By */
+.powered {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #555555;
+  letter-spacing: 0.04em;
+  margin-bottom: 1.2rem;
+}
+
+/* Section Titles */
+.section-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #000000;
+  margin-bottom: 0.8rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid #999999;
+}
+
+.subsection-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 1.2rem 0 0.4rem;
+  color: #222222;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Tables */
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  margin-bottom: 0.6rem;
+}
+
+.doc-table th {
+  background-color: #f2f2f2;
+  color: #000000;
+  font-weight: 700;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #aaaaaa;
+  font-size: 0.75rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.doc-table td {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #cccccc;
+  vertical-align: top;
+  color: #111111;
+}
+
+.doc-table td:first-child {
+  font-weight: 600;
+  white-space: nowrap;
+  color: #222222;
+  width: 90px;
+}
+
+.doc-table td:nth-child(2) {
+  font-weight: 600;
+  color: #222222;
+  width: 180px;
+}
+
+/* Note */
+.doc-note {
+  font-size: 0.75rem;
+  color: #444444;
+  background-color: #f9f9f9;
+  border-left: 3px solid #888888;
+  padding: 0.5rem 0.8rem;
+  margin: 1rem 0 0.8rem;
+  line-height: 1.5;
+}
+
+.doc-note strong {
+  color: #000000;
+}
+
+/* Footer */
+.doc-footer {
+  margin-top: 1.2rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid #999999;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  color: #333333;
+  gap: 0.5rem;
+}
+
+.doc-footer .fair-play {
+  font-style: italic;
+  color: #444444;
+}
+
+.doc-footer a {
+  color: #111111;
+  text-decoration: none;
+  font-weight: 600;
+  border-bottom: 1px dotted #555555;
+}
+
+.doc-footer a:hover {
+  color: #000000;
+  border-bottom: 1px solid #000000;
+}
+
+/* Responsive */
+@media (max-width: 700px) {
+  .document {
+    padding: 1.2rem 1rem;
+  }
+
+  .doc-header {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .doc-header .logo-left img,
+  .doc-header .logo-right img {
+    height: 44px;
+  }
+
+  .doc-header .title h1 {
+    font-size: 1.4rem;
+  }
+
+  .doc-table {
+    font-size: 0.7rem;
+  }
+
+  .doc-table td:first-child,
+  .doc-table td:nth-child(2) {
+    white-space: normal;
+    width: auto;
+  }
+
+  .doc-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media print {
+  body {
+    padding: 0;
+    background: #ffffff;
+  }
+
+  .document-page-wrapper {
+    padding: 0;
+    background: transparent;
+  }
+
+  .document {
+    border: none;
+    box-shadow: none;
+    padding: 0.8in 0.6in;
+    max-width: 100%;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

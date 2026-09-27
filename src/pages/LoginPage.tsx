@@ -99,7 +99,7 @@ export const LoginPage: React.FC = () => {
           <div className="absolute inset-0 rounded-full bg-[#22c55e]/25 blur-2xl group-hover:bg-[#22c55e]/35 transition-all duration-500 scale-105" />
           <div className="relative p-2 rounded-3xl bg-gradient-to-b from-[#22c55e]/30 via-transparent to-[#22c55e]/10 border border-[#22c55e]/40 shadow-[0_0_35px_rgba(34,197,94,0.2)] backdrop-blur-md">
             <img
-              src="/logo.jpg"
+              src={`${import.meta.env.BASE_URL}logo.jpg`}
               alt="Official eFootball Tournament Logo"
               referrerPolicy="no-referrer"
               className="w-36 h-36 sm:w-44 sm:h-44 object-contain rounded-2xl drop-shadow-2xl"

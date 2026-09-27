@@ -160,7 +160,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="absolute inset-0 rounded-full bg-[#22c55e]/25 blur-2xl group-hover:bg-[#22c55e]/35 transition-all duration-500 scale-105" />
           <div className="relative p-2 rounded-3xl bg-gradient-to-b from-[#22c55e]/30 via-transparent to-[#22c55e]/10 border border-[#22c55e]/40 shadow-[0_0_35px_rgba(34,197,94,0.2)] backdrop-blur-md">
             <img
-              src="https://drive.google.com/uc?export=view&id=1NJK85Q38emLEw1fdPJt8m0LbPtEpael5"
+              src="https://kenya-one.github.io/chuka-efootball/logo.jpg"
               alt="Official eFootball Tournament Logo"
               referrerPolicy="no-referrer"
               className="w-40 h-40 sm:w-52 sm:h-52 object-contain rounded-2xl drop-shadow-2xl transition-transform duration-300 group-hover:scale-[1.02]"

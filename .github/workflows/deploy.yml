@@ -1,3 +1,4 @@
+
 name: Deploy Chuka eFootball PWA to GitHub Pages
 
 on:
@@ -24,6 +25,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
@@ -45,7 +47,7 @@ jobs:
           echo "Building production bundle for repo: $REPO_NAME"
           BASE_URL="/${REPO_NAME}/" npm run build
         env:
-          VITE_APPS_SCRIPT_URL: ${{ secrets.VITE_APPS_SCRIPT_URL || secrets.VITE_APPS_SCRIPT_WEB_APP_URL || 'https://script.google.com/macros/s/AKfycbyKjY31IpwKF0wiSVP1g4oORnO7klNLZmQFkWgw81xAdBfCCJ29w-opVSPyv4RrjRpK/exec' }}
+          VITE_APPS_SCRIPT_URL: ${{ secrets.VITE_APPS_SCRIPT_URL || secrets.VITE_APPS_SCRIPT_WEB_APP_URL || 'https://script.google.com/macros/s/AKfycbyzOD0zBzZuxzj1-NuAV0Jw2IopDrSAebQmtSREH2s5Iatn5CYQftL14BAozNi5QLcy/exec' }}
           VITE_APPS_SCRIPT_WEB_APP_URL: ${{ secrets.VITE_APPS_SCRIPT_WEB_APP_URL || secrets.VITE_APPS_SCRIPT_URL }}
           VITE_GOOGLE_SHEET_ID: ${{ secrets.VITE_GOOGLE_SHEET_ID }}
 
@@ -60,3 +62,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+

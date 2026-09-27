@@ -17,7 +17,8 @@ export const LogoDisplay: React.FC<LogoDisplayProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const defaultLogo = `${import.meta.env.BASE_URL}logo.jpg`;
+  const defaultLogo =
+  "https://drive.google.com/uc?export=view&id=1NJK85Q38emLEw1fdPJt8m0LbPtEpael5";
   const activeLogo = customLogoUrl || defaultLogo;
   const isDark = theme === 'dark';
 

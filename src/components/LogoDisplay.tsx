@@ -17,8 +17,7 @@ export const LogoDisplay: React.FC<LogoDisplayProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const defaultLogo =
-  "https://drive.google.com/uc?export=view&id=1NJK85Q38emLEw1fdPJt8m0LbPtEpael5";
+ const defaultLogo = "https://kenya-one.github.io/chuka-efootball/logo.jpg";
   const activeLogo = customLogoUrl || defaultLogo;
   const isDark = theme === 'dark';
 

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <polygon points="50,5 92,22 82,78 50,95 18,78 8,22" fill="#0c120d" stroke="#22c55e" stroke-width="4"/>
+  <circle cx="50" cy="52" r="22" fill="#22c55e" stroke="#0c120d" stroke-width="3"/>
+  <text x="50" y="26" font-family="'Chakra Petch', sans-serif" font-weight="900" font-size="14" fill="#22c55e" text-anchor="middle">CHUKA</text>
+  <path d="M40 45 L50 38 L60 45 L56 55 L44 55 Z" fill="#0c120d"/>
+  <circle cx="38" cy="58" r="3" fill="#0c120d"/>
+  <circle cx="62" cy="58" r="3" fill="#0c120d"/>
+  <circle cx="50" cy="66" r="3" fill="#0c120d"/>
+</svg>

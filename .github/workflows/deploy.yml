@@ -1,0 +1,65 @@
+
+name: Deploy Chuka eFootball PWA to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+# Grant GitHub Actions permissions to deploy to Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment
+concurrency:
+  group: 'pages'
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build Production Web App
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          if [ -z "$REPO_NAME" ]; then
+            REPO_NAME="chuka-efootball"
+          fi
+          echo "Building production bundle for repo: $REPO_NAME"
+          BASE_URL="/${REPO_NAME}/" npm run build
+        env:
+          VITE_APPS_SCRIPT_URL: ${{ secrets.VITE_APPS_SCRIPT_URL || secrets.VITE_APPS_SCRIPT_WEB_APP_URL || 'https://script.google.com/macros/s/AKfycbyzOD0zBzZuxzj1-NuAV0Jw2IopDrSAebQmtSREH2s5Iatn5CYQftL14BAozNi5QLcy/exec' }}
+          VITE_APPS_SCRIPT_WEB_APP_URL: ${{ secrets.VITE_APPS_SCRIPT_WEB_APP_URL || secrets.VITE_APPS_SCRIPT_URL }}
+          VITE_GOOGLE_SHEET_ID: ${{ secrets.VITE_GOOGLE_SHEET_ID }}
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+

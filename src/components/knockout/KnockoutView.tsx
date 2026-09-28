@@ -42,6 +42,10 @@ import { TournamentAdminService, KNOCKOUT_RULES } from '../../services/tournamen
 import { SubmitResultModal } from '../matches/SubmitResultModal';
 import { SubmitDisputeModal } from '../matches/SubmitDisputeModal';
 import { CompetitionRegistrationModal } from '../competitions/CompetitionRegistrationModal';
+import { RegisteredMembersPanel } from '../competitions/RegisteredMembersPanel';
+import { CompetitionHero, CompetitionDocumentsShelf, CompetitionSelector } from '../competitions/CompetitionHero';
+import { GazetteDocumentViewer, GazetteKind } from '../common/GazetteDocumentViewer';
+import { splitRegistrations, isDeadRegistration, buildBracketPlan } from '../../utils/competitionUtils';
 
 interface KnockoutViewProps {
   tournaments?: (CupTournamentRecord | KnockoutTournament | Competition)[];
@@ -73,22 +77,18 @@ export const KnockoutView: React.FC<KnockoutViewProps> = ({
   const isDark = theme === 'dark';
 
   const [tournaments, setTournaments] = useState<Competition[]>([]);
-  const [matches, setMatches] = useState<any[]>(propMatches || []);
+  const [allFixtures, setAllFixtures] = useState<any[]>(propMatches || []);
   const [registrations, setRegistrations] = useState<CompetitionRegistration[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [docKind, setDocKind] = useState<GazetteKind | null>(null);
 
   const [selectedMatch, setSelectedMatch] = useState<any | null>(null);
   const [disputeMatch, setDisputeMatch] = useState<any | null>(null);
   const [regSuccess, setRegSuccess] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedTill, setCopiedTill] = useState(false);
-  const [docNotice, setDocNotice] = useState<string | null>(null);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
-
-  const TILL_NUMBER = KNOCKOUT_RULES.PaymentTill; // 6817863
-  const REQUIRED_PLAYERS = KNOCKOUT_RULES.MinPlayers; // 1,024
-  const ENTRY_FEE = KNOCKOUT_RULES.EntryFee; // 20
-  const PRIZE_POOL = KNOCKOUT_RULES.PrizeAmount; // 1,000
 
   // Load authoritative tournament data from backend
   const loadCupData = async () => {
@@ -100,20 +100,9 @@ export const KnockoutView: React.FC<KnockoutViewProps> = ({
         TournamentAdminService.getRegistrations(),
         TournamentAdminService.getFixtures(),
       ]);
-
-      if (comps && comps.length > 0) {
-        setTournaments(comps);
-      }
+      setTournaments(comps || []);
       setRegistrations(allRegs);
-
-      // Load bracket fixtures if tournament exists
-      const targetComp = comps[0];
-      if (targetComp) {
-        const compFixtures = fixtures.filter((f) => f.CompetitionID === targetComp.CompetitionID);
-        setMatches(compFixtures);
-      } else {
-        setMatches(fixtures);
-      }
+      setAllFixtures(fixtures);
     } catch (err: any) {
       console.warn('KnockoutView load error:', err);
     } finally {
@@ -125,47 +114,44 @@ export const KnockoutView: React.FC<KnockoutViewProps> = ({
     loadCupData();
   }, [currentPlayer]);
 
-  const activeTournament = tournaments[0] || null;
+  // Newest / most active tournaments first
+  const orderedTournaments = [...tournaments].sort((a, b) => {
+    const rank = (c: Competition) => (c.Status === 'OPEN' ? 0 : c.Status === 'IN_PROGRESS' ? 1 : c.Status === 'FULL' ? 2 : 3);
+    return rank(a) - rank(b);
+  });
+  const activeTournament = orderedTournaments.find((t) => t.CompetitionID === selectedId) || orderedTournaments[0] || null;
 
-  // Authoritative approved count for knockout
   const compRegistrations = activeTournament
     ? registrations.filter((r) => r.CompetitionID === activeTournament.CompetitionID)
-    : registrations;
+    : [];
+  const { verified: verifiedRegs, unverified: unverifiedRegs } = splitRegistrations(compRegistrations);
 
-  const approvedRegistrations = compRegistrations.filter(
-    (r) => r.Status === 'APPROVED' || r.PaymentStatus === 'PAID'
-  );
-  const pendingRegistrations = compRegistrations.filter(
-    (r) => r.Status === 'PENDING' || r.PaymentStatus === 'PENDING'
-  );
+  const matches = activeTournament
+    ? allFixtures.filter((f) => f.CompetitionID === activeTournament.CompetitionID)
+    : [];
 
-  const approvedCount = activeTournament?.ApprovedCount !== undefined
-    ? activeTournament.ApprovedCount
-    : approvedRegistrations.length;
+  const ENTRY_FEE = activeTournament?.EntryFee ?? KNOCKOUT_RULES.EntryFee;
+  const REQUIRED_PLAYERS = activeTournament?.MinPlayers || KNOCKOUT_RULES.MinPlayers;
+  const MAX_PLAYERS = activeTournament?.MaxPlayers || KNOCKOUT_RULES.MaxPlayers;
+  const PRIZE_POOL = activeTournament?.PrizeAmount || KNOCKOUT_RULES.PrizeAmount;
+  const TILL_NUMBER = activeTournament?.PaymentTill || KNOCKOUT_RULES.PaymentTill;
+
+  const approvedCount =
+    compRegistrations.length > 0 ? verifiedRegs.length : activeTournament?.ApprovedCount ?? 0;
 
   const userRegistration = currentPlayer
-    ? compRegistrations.find(
-        (r) => r.PlayerID === currentPlayer.PlayerID || r.GoogleUID === currentPlayer.FirebaseUID
-      )
+    ? (() => {
+        const mine = compRegistrations.filter(
+          (r) => r.PlayerID === currentPlayer.PlayerID || r.GoogleUID === currentPlayer.FirebaseUID
+        );
+        return mine.find((r) => !isDeadRegistration(r)) || mine[0] || null;
+      })()
     : null;
 
   const copyTill = () => {
     navigator.clipboard.writeText(TILL_NUMBER);
     setCopiedTill(true);
     setTimeout(() => setCopiedTill(false), 2000);
-  };
-
-  const handleOpenDoc = (url?: string, docName?: string) => {
-    if (url && url.trim().startsWith('http')) {
-      const a = document.createElement('a');
-      a.href = url.trim();
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      a.click();
-    } else {
-      setDocNotice(`The ${docName || 'Google Document'} is not configured yet.`);
-      setTimeout(() => setDocNotice(null), 3500);
-    }
   };
 
   const handleSubmitResult = async (payload: ResultSubmissionPayload) => {
@@ -206,74 +192,36 @@ export const KnockoutView: React.FC<KnockoutViewProps> = ({
   };
 
   return (
-    <div id="knockout-page" className="w-full max-w-5xl mx-auto px-4 py-6 sm:py-10 space-y-8">
+    <div id="knockout-page" className="w-full max-w-5xl mx-auto px-4 py-6 sm:py-10 space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[#22c55e]/15 text-[#22c55e] border border-[#22c55e]/30">
             <Trophy className="w-3.5 h-3.5" />
-            <span>Weekly Single Elimination Knockout</span>
+            <span>Single Elimination Cups</span>
           </div>
           <h1
             className="text-2xl sm:text-3xl font-extrabold uppercase tracking-wide mt-1"
             style={{ fontFamily: "'Chakra Petch', sans-serif" }}
           >
-            Weekly Knockout (1,024 Players)
+            Knockout Tournaments
           </h1>
           <p className={`text-xs sm:text-sm mt-0.5 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-            Official Chuka eFootball cup. Entry: KSh 20 • Till: {TILL_NUMBER} • Prize: KSh 1,000.
+            Register, follow the verified entrants and read the official gazette for each cup.
           </p>
         </div>
-
-        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-          <button
-            type="button"
-            onClick={loadCupData}
-            disabled={loading}
-            className={`p-2 rounded-xl border transition-all cursor-pointer ${
-              isDark ? 'border-white/10 hover:bg-white/5 text-gray-400 hover:text-white' : 'border-gray-200 hover:bg-gray-100 text-gray-600'
-            }`}
-            title="Refresh live data"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-[#22c55e]' : ''}`} />
-          </button>
-
-          {/* Published Google Document Actions */}
-          <button
-            type="button"
-            onClick={() => handleOpenDoc(activeTournament?.RulesDocumentURL, 'Official Rules')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs font-semibold text-gray-300 hover:text-white transition-all cursor-pointer"
-          >
-            <FileText className="w-3.5 h-3.5 text-[#22c55e]" />
-            <span>View Rules</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleOpenDoc(activeTournament?.RegisteredPlayersDocumentURL, 'Registered Players Document')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs font-semibold text-gray-300 hover:text-white transition-all cursor-pointer"
-          >
-            <Users className="w-3.5 h-3.5 text-[#22c55e]" />
-            <span>View Registered Players</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleOpenDoc(activeTournament?.KnockoutBracketDocumentURL, 'Knockout Bracket Document')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs font-semibold text-gray-300 hover:text-white transition-all cursor-pointer"
-          >
-            <Trophy className="w-3.5 h-3.5 text-amber-400" />
-            <span>View Knockout Bracket</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={loadCupData}
+          disabled={loading}
+          className={`p-2 rounded-xl border transition-all cursor-pointer ${
+            isDark ? 'border-white/10 hover:bg-white/5 text-gray-400 hover:text-white' : 'border-gray-200 hover:bg-gray-100 text-gray-600'
+          }`}
+          title="Refresh live data"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-[#22c55e]' : ''}`} />
+        </button>
       </div>
-
-      {docNotice && (
-        <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2 animate-in fade-in">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{docNotice}</span>
-        </div>
-      )}
 
       {regSuccess && (
         <div className="p-4 rounded-2xl bg-[#22c55e]/15 border border-[#22c55e]/40 text-[#22c55e] text-xs flex items-center gap-2 animate-in fade-in">
@@ -289,184 +237,52 @@ export const KnockoutView: React.FC<KnockoutViewProps> = ({
         </div>
       )}
 
-      {/* Honest Empty State if no active tournament configured */}
       {!activeTournament ? (
-        <div
-          id="knockout-empty-state"
-          className="p-10 sm:p-14 text-center rounded-3xl border border-white/10 bg-[#111612]"
-        >
+        <div id="knockout-empty-state" className="p-10 sm:p-14 text-center rounded-3xl border border-white/10 bg-[#111612]">
           <div className="w-16 h-16 rounded-3xl bg-[#22c55e]/10 border border-[#22c55e]/30 flex items-center justify-center text-[#22c55e] mx-auto mb-4">
             <Trophy className="w-8 h-8" />
           </div>
-          <h2
-            className="text-xl font-bold uppercase tracking-wide text-white"
-            style={{ fontFamily: "'Chakra Petch', sans-serif" }}
-          >
-            No competitions configured.
+          <h2 className="text-xl font-bold uppercase tracking-wide text-white" style={{ fontFamily: "'Chakra Petch', sans-serif" }}>
+            No tournament open yet
           </h2>
           <p className="text-xs sm:text-sm max-w-md mx-auto mt-2 leading-relaxed text-gray-400">
-            The weekly knockout tournament is scheduled by administrators. Check back shortly for registration opening.
+            The next knockout is announced by the administrators. Check back shortly for registration.
           </p>
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Active Tournament Card */}
-          <div
-            className={`p-6 rounded-3xl border ${
-              isDark
-                ? 'bg-gradient-to-r from-[#121c14] to-[#0d140f] border-[#22c55e]/40'
-                : 'bg-emerald-50 border-emerald-200'
-            }`}
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-              <div className="flex items-start gap-4">
-                {/* Competition Profile Picture */}
-                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden border border-white/15 bg-black/60 shrink-0 relative shadow-md">
-                  {(activeTournament.ProfileImageURL || activeTournament.ImageURL) ? (
-                    <img
-                      src={activeTournament.ProfileImageURL || activeTournament.ImageURL}
-                      alt={activeTournament.Name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-gray-500 bg-gradient-to-br from-[#22c55e]/10 to-transparent">
-                      <Trophy className="w-8 h-8 text-[#22c55e]/40" />
-                      <span className="text-[8px] uppercase font-bold text-gray-400 mt-0.5">Cup</span>
-                    </div>
-                  )}
-                </div>
+          <CompetitionSelector
+            competitions={orderedTournaments}
+            selectedId={activeTournament.CompetitionID}
+            onSelect={setSelectedId}
+          />
 
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#22c55e]/20 text-[#22c55e]">
-                      {activeTournament.Status}
-                    </span>
-                    <span className="text-xs text-gray-400 font-mono">
-                      {activeTournament.CompetitionID}
-                    </span>
-                  </div>
+          <CompetitionHero
+            competition={activeTournament}
+            verifiedCount={approvedCount}
+            unverifiedCount={unverifiedRegs.length}
+            minPlayers={REQUIRED_PLAYERS}
+            maxPlayers={MAX_PLAYERS}
+            entryFee={ENTRY_FEE}
+            prize={PRIZE_POOL}
+            till={TILL_NUMBER}
+            isGuest={isGuest}
+            userRegistration={userRegistration}
+            registerLabel={`Register for Knockout (KSh ${ENTRY_FEE})`}
+            activeLabel="Verified — you are in the draw"
+            isFull={approvedCount >= MAX_PLAYERS}
+            copiedTill={copiedTill}
+            onCopyTill={copyTill}
+            onRegister={() => setIsRegisterModalOpen(true)}
+          />
 
-                  <h2 className="text-xl sm:text-2xl font-bold text-white leading-snug">
-                    {activeTournament.Name}
-                  </h2>
+          <CompetitionDocumentsShelf isLeague={false} onOpen={setDocKind} />
 
-                  {/* Rules summary chips */}
-                  <div className="flex flex-wrap items-center gap-4 text-xs text-gray-300">
-                    <div className="flex items-center gap-1.5">
-                      <Shield className="w-3.5 h-3.5 text-[#22c55e]" />
-                      <span>Entry Fee: <strong>KSh {ENTRY_FEE}</strong></span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-amber-300 font-semibold">
-                      <Award className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Winner Prize: <strong>KSh {PRIZE_POOL.toLocaleString()}</strong></span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-[#22c55e]" />
-                      <span>Approved: <strong className="text-white font-mono">{approvedCount.toLocaleString()} / {REQUIRED_PLAYERS.toLocaleString()}</strong></span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Player Status / Actions */}
-              <div className="flex flex-col items-start sm:items-end gap-3 shrink-0">
-                {isGuest ? (
-                  <div className="text-xs text-amber-400 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
-                    Sign in with Google to register.
-                  </div>
-                ) : userRegistration ? (
-                  <div className="space-y-1.5 text-right">
-                    {userRegistration.Status === 'APPROVED' ? (
-                      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#22c55e]/20 text-[#22c55e] border border-[#22c55e]/40 text-xs font-bold">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Officially Approved &amp; Roster Confirmed</span>
-                      </div>
-                    ) : userRegistration.Status === 'PENDING' ? (
-                      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs font-bold">
-                        <FileCheck className="w-4 h-4" />
-                        <span>PENDING PAYMENT APPROVAL</span>
-                      </div>
-                    ) : (
-                      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/40 text-xs font-bold">
-                        <AlertCircle className="w-4 h-4" />
-                        <span>Registration {userRegistration.Status}</span>
-                      </div>
-                    )}
-                    <p className="text-[11px] text-gray-400">
-                      {userRegistration.Status === 'PENDING'
-                        ? `Awaiting admin approval for Till ${TILL_NUMBER}.`
-                        : 'Your participation is active.'}
-                    </p>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setIsRegisterModalOpen(true)}
-                    className="px-6 py-3 rounded-xl bg-[#22c55e] hover:bg-[#16a34a] text-black font-extrabold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-lg shadow-[#22c55e]/20"
-                  >
-                    Register for Knockout (KSh {ENTRY_FEE})
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Till Number Instructions & Copy Button */}
-            <div className="mt-5 pt-4 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-black/30 p-4 rounded-2xl">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                  <CreditCard className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs text-gray-400 font-semibold uppercase">M-Pesa Payment Instructions:</div>
-                  <div className="text-sm font-bold text-white flex items-center gap-2 font-mono">
-                    <span>Pay KSh {ENTRY_FEE} to Till Number:</span>
-                    <span className="text-amber-400 font-black text-base">{TILL_NUMBER}</span>
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={copyTill}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md cursor-pointer self-start sm:self-auto"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>{copiedTill ? '✓ Copied Till!' : 'Copy Till Number'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Knockout Progress Status */}
-          <div className="p-5 rounded-3xl bg-[#111712] border border-white/10 space-y-3">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-[#22c55e]" />
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
-                  Official Approved Player Count
-                </h3>
-              </div>
-              <span className="text-xs font-mono font-bold text-[#22c55e]">
-                {approvedCount.toLocaleString()} / {REQUIRED_PLAYERS.toLocaleString()} Approved Players
-              </span>
-            </div>
-
-            {/* Progress Bar */}
-            <div className="w-full h-3 bg-black/60 rounded-full overflow-hidden border border-white/10">
-              <div
-                className="h-full bg-gradient-to-r from-[#22c55e] to-emerald-400 transition-all duration-500"
-                style={{ width: `${Math.min(100, (approvedCount / REQUIRED_PLAYERS) * 100)}%` }}
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1">
-              <span>Only administrator-approved registrations count toward the official roster.</span>
-              <span className="font-semibold text-amber-300">
-                {approvedCount < REQUIRED_PLAYERS
-                  ? `Knockout bracket unlocks when ${REQUIRED_PLAYERS.toLocaleString()} players are approved.`
-                  : '1,024 approved players reached! Ready for bracket.'}
-              </span>
-            </div>
-          </div>
+          <RegisteredMembersPanel
+            registrations={compRegistrations}
+            currentPlayer={currentPlayer}
+            loading={loading && registrations.length === 0}
+          />
 
           {/* Fixtures & Bracket Section */}
           <div className="space-y-4">
@@ -478,29 +294,50 @@ export const KnockoutView: React.FC<KnockoutViewProps> = ({
               {approvedCount < REQUIRED_PLAYERS && (
                 <span className="px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
                   <Lock className="w-3 h-3" />
-                  <span>Bracket Locked</span>
+                  <span>Awaiting Draw</span>
                 </span>
               )}
             </div>
 
-            {approvedCount < REQUIRED_PLAYERS && matches.length === 0 ? (
-              <div className="p-8 sm:p-12 text-center rounded-3xl border border-white/10 bg-black/40 space-y-3">
-                <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto">
-                  <Lock className="w-6 h-6" />
+            {matches.length === 0 && approvedCount < REQUIRED_PLAYERS ? (
+              <div className="rounded-3xl border border-white/10 bg-black/40 p-5 sm:p-7 space-y-5">
+                <div className="text-center space-y-1">
+                  <div className="text-xs font-mono font-bold text-[#22c55e]">
+                    {approvedCount.toLocaleString()} / {REQUIRED_PLAYERS.toLocaleString()} verified players
+                  </div>
+                  <p className="text-xs text-gray-400">The bracket has not been drawn yet. Here is how it will work:</p>
                 </div>
-                <h3 className="text-base font-bold text-white font-mono uppercase">
-                  Knockout Bracket Locked
-                </h3>
-                <p className="text-xs text-gray-400 max-w-md mx-auto leading-relaxed">
-                  The automated 512-match Round 1 bracket will unlock as soon as exactly <strong>1,024 approved players</strong> are verified by administration.
-                </p>
-                <div className="text-xs font-mono text-[#22c55e] font-bold pt-2">
-                  Current Status: {approvedCount.toLocaleString()} / 1,024 approved players
+                <ol className="grid sm:grid-cols-2 gap-2.5 text-xs text-gray-300">
+                  {[
+                    ['1', 'Register & pay', `Pay KSh ${ENTRY_FEE} to Till ${TILL_NUMBER} and submit your reference.`],
+                    ['2', 'Get verified', 'The administration confirms your payment. Only verified players enter the draw.'],
+                    ['3', 'The draw', `At ${REQUIRED_PLAYERS.toLocaleString()} verified players, opponents are drawn at random.`],
+                    ['4', 'Win to advance', 'Winners move on, losers are out. Extra time and penalties settle draws.'],
+                  ].map(([n, t, d]) => (
+                    <li key={n} className="flex gap-3 p-3 rounded-2xl bg-white/5 border border-white/5">
+                      <span className="w-6 h-6 shrink-0 rounded-full bg-[#22c55e] text-black font-black flex items-center justify-center">{n}</span>
+                      <span><strong className="text-white block">{t}</strong>{d}</span>
+                    </li>
+                  ))}
+                </ol>
+                <div className="overflow-x-auto">
+                  <div className="flex gap-2 min-w-max">
+                    {buildBracketPlan(Math.pow(2, Math.ceil(Math.log2(Math.max(2, MAX_PLAYERS))))).map((r) => (
+                      <div key={r.name} className="w-28 shrink-0 rounded-xl border border-[#22c55e]/20 bg-[#22c55e]/5 p-2.5 text-center">
+                        <div className="text-[10px] uppercase tracking-wider font-bold text-[#22c55e]">{r.name}</div>
+                        <div className="text-sm font-mono font-bold text-white mt-1">{r.matches.toLocaleString()}</div>
+                        <div className="text-[10px] text-gray-500">{r.matches === 1 ? 'match' : 'matches'}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+                <button type="button" onClick={() => setDocKind('bracket')} className="mx-auto flex items-center gap-1.5 text-xs font-bold text-[#22c55e] hover:underline cursor-pointer">
+                  <FileText className="w-3.5 h-3.5" /> Read the full gazette notice
+                </button>
               </div>
             ) : matches.length === 0 ? (
               <div className="p-8 text-center rounded-3xl border border-white/10 bg-black/20 text-gray-400 text-xs">
-                No fixtures generated yet. Tournament administrator will generate the 512 Round 1 matches once registration concludes.
+                No fixtures generated yet. Round 1 is published once registration concludes.
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -590,6 +427,16 @@ export const KnockoutView: React.FC<KnockoutViewProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {docKind && activeTournament && (
+        <GazetteDocumentViewer
+          kind={docKind}
+          competition={activeTournament}
+          registrations={compRegistrations}
+          fixtures={allFixtures}
+          onClose={() => setDocKind(null)}
+        />
       )}
 
       {/* Registration Modal */}

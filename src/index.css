@@ -254,3 +254,57 @@
     display: none !important;
   }
 }
+
+/* ==========================================================================
+   OFFICIAL GAZETTE — competition documents (rendered by GazetteDocumentViewer)
+   ========================================================================== */
+.gz-paper { background: #fdfbf4; color: #16130d; max-width: 860px; padding: 1.8rem 2.2rem 1.6rem; border: 1px solid #cfc7ae; }
+.gz-masthead { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.gz-masthead img { height: 70px; width: auto; }
+.gz-masthead-title { flex: 1; text-align: center; }
+.gz-univ { font-size: 0.72rem; letter-spacing: 0.32em; text-transform: uppercase; color: #166534; font-weight: 700; }
+.gz-masthead-title h1 { font-family: 'Georgia', 'Times New Roman', serif; font-size: 1.9rem; line-height: 1.1; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; margin: 0.2rem 0; }
+.gz-tagline { font-size: 0.7rem; font-style: italic; color: #4a4536; }
+.gz-notice-box { border: 1px solid #16130d; padding: 0.35rem 0.6rem; text-align: center; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.08em; min-width: 120px; }
+.gz-notice-box strong { display: block; font-size: 0.72rem; letter-spacing: 0.02em; margin-top: 0.15rem; }
+.gz-double-rule { border-top: 3px double #16130d; margin: 0.6rem 0; }
+.gz-dateline { display: flex; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; font-size: 0.72rem; font-variant: small-caps; letter-spacing: 0.05em; }
+.gz-doc-title { text-align: center; font-family: 'Georgia', serif; text-transform: uppercase; letter-spacing: 0.08em; font-size: 1.25rem; margin: 1.1rem 0 0.15rem; }
+.gz-doc-sub { text-align: center; font-style: italic; font-size: 0.9rem; margin-bottom: 1.2rem; color: #3b3626; }
+.gz-section { margin-bottom: 1.1rem; }
+.gz-section-title { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid #16130d; padding-bottom: 0.2rem; margin-bottom: 0.55rem; }
+.gz-list { list-style: decimal outside; padding-left: 1.6rem; font-size: 0.82rem; line-height: 1.55; }
+.gz-list li { margin-bottom: 0.3rem; }
+.gz-empty { font-style: italic; font-size: 0.8rem; color: #5a5442; padding: 0.4rem 0; }
+.gz-paper .doc-table th { background: #ece6d0; }
+.gz-paper .doc-table td:first-child { width: auto; }
+.gz-paper .doc-table td:nth-child(2) { width: auto; }
+.gz-kv td:first-child { width: 38%; font-weight: 700; }
+.gz-roster td:first-child, .gz-standings td:first-child { width: 48px; text-align: center; }
+.gz-bracket { display: flex; gap: 0.6rem; overflow-x: auto; padding-bottom: 0.3rem; }
+.gz-bracket-col { flex: 1; min-width: 130px; display: flex; flex-direction: column; gap: 0.5rem; }
+.gz-bracket-body { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 0.5rem; }
+.gz-bracket-head { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; text-align: center; }
+.gz-bracket-box { border: 1px solid #16130d; background: #fff; padding: 0.4rem; font-size: 0.68rem; text-align: center; }
+.gz-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-top: 2rem; font-size: 0.75rem; text-align: center; }
+.gz-sign { flex: 1; }
+.gz-sign-line { border-top: 1px solid #16130d; margin-bottom: 0.25rem; }
+.gz-small { font-size: 0.65rem; color: #4a4536; }
+.gz-seal { width: 78px; height: 78px; border: 2px double #166534; color: #166534; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.1em; line-height: 1.3; transform: rotate(-8deg); flex-shrink: 0; }
+.gz-fineprint { margin-top: 1rem; text-align: center; font-size: 0.6rem; color: #6b654f; border-top: 1px solid #cfc7ae; padding-top: 0.4rem; }
+@media (max-width: 700px) {
+  .gz-paper { padding: 1.1rem 0.9rem; }
+  .gz-masthead { flex-direction: column; text-align: center; }
+  .gz-masthead-title h1 { font-size: 1.4rem; }
+  .gz-footer { flex-direction: column; align-items: stretch; }
+  .gz-seal { align-self: center; }
+}
+@media print {
+  body > #root { display: none !important; }
+  .gz-toolbar { display: none !important; }
+  .gz-overlay { position: static !important; background: #fff !important; overflow: visible !important; height: auto !important; }
+  .gz-paper-wrap { padding: 0 !important; }
+  .gz-paper { border: none !important; box-shadow: none !important; max-width: 100% !important; }
+  .gz-section { break-inside: avoid-page; }
+  .doc-table tr { break-inside: avoid; }
+}

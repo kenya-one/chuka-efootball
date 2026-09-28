@@ -13,11 +13,18 @@ import {
   Clock,
   ArrowRight,
   Filter,
+  X,
+  ScrollText,
+  BadgeCheck,
 } from 'lucide-react';
 import { Competition, Player, CompetitionRegistration } from '../../types';
 import { CompetitionApiService } from '../../api/client';
 import { TournamentAdminService } from '../../services/tournamentAdminService';
 import { CompetitionRegistrationModal } from './CompetitionRegistrationModal';
+import { RegisteredMembersPanel } from './RegisteredMembersPanel';
+import { GazetteDocumentViewer, GazetteKind } from '../common/GazetteDocumentViewer';
+import { ShareButton } from '../common/ShareButton';
+import { splitRegistrations, getCompetitionShareText, getCompetitionShareUrl } from '../../utils/competitionUtils';
 
 interface CompetitionListProps {
   player: Player | null;
@@ -38,16 +45,21 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
 
   // Registration Modal state
   const [modalCompetition, setModalCompetition] = useState<Competition | null>(null);
+  const [allRegistrations, setAllRegistrations] = useState<CompetitionRegistration[]>([]);
+  const [membersFor, setMembersFor] = useState<Competition | null>(null);
+  const [docView, setDocView] = useState<{ comp: Competition; kind: GazetteKind } | null>(null);
 
   // Load competitions and registrations
   const loadData = async () => {
     setLoading(true);
     try {
-      const [comps, compRes, regRes] = await Promise.all([
+      const [comps, compRes, regRes, everyReg] = await Promise.all([
         TournamentAdminService.getCompetitions(),
         CompetitionApiService.getCompetitions(),
         player ? CompetitionApiService.getMyRegistrations() : Promise.resolve({ success: false, data: { registrations: [] } }),
+        TournamentAdminService.getRegistrations().catch(() => [] as CompetitionRegistration[]),
       ]);
+      setAllRegistrations(everyReg);
 
       if (comps && comps.length > 0) {
         setCompetitions(comps);
@@ -261,7 +273,7 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
         </div>
       </div>
 
-      {/* Competitions Grid */}
+      {/* Competitions — grouped: tournaments first, then leagues, most active first */}
       {loading ? (
         <div className="bg-[#111712] border border-white/10 rounded-3xl p-12 text-center space-y-3">
           <div className="w-8 h-8 border-2 border-[#22c55e] border-t-transparent rounded-full animate-spin mx-auto" />
@@ -275,193 +287,217 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
           <h3 className="text-sm font-bold text-white font-mono uppercase">No Competitions Found</h3>
           <p className="text-xs text-gray-400 max-w-sm mx-auto">
             {competitions.length === 0
-              ? 'No active competitions are currently scheduled. Check back soon or contact tournament administration.'
+              ? 'No competitions are scheduled yet. Check back soon or contact tournament administration.'
               : 'No competitions matched your search and filter criteria.'}
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {filteredCompetitions.map((comp) => {
-            const userReg = regMap.get(comp.CompetitionID);
-            const isRegOpen = comp.Status?.toUpperCase() === 'OPEN';
-            const isFull = (comp.RegisteredCount || 0) >= comp.MaxPlayers;
-            const regCount = comp.RegisteredCount || 0;
-            const capacityPercent = Math.min(100, Math.round((regCount / comp.MaxPlayers) * 100));
-
+        <div className="space-y-8">
+          {[
+            { key: 'KNOCKOUT', title: 'Knockout Tournaments' },
+            { key: 'LEAGUE', title: 'Leagues' },
+            { key: 'OTHER', title: 'Friendlies & Special Events' },
+          ].map((group) => {
+            const rank = (c: Competition) => {
+              const st = String(c.Status).toUpperCase();
+              return st === 'OPEN' ? 0 : st === 'IN_PROGRESS' ? 1 : st === 'FULL' ? 2 : st === 'COMPLETED' ? 4 : 3;
+            };
+            const list = filteredCompetitions
+              .filter((c) => {
+                const t = String(c.CompetitionType).toUpperCase();
+                return group.key === 'OTHER' ? t !== 'KNOCKOUT' && t !== 'LEAGUE' : t === group.key;
+              })
+              .sort((a, b) => rank(a) - rank(b));
+            if (list.length === 0) return null;
             return (
-              <div
-                key={comp.CompetitionID}
-                id={`competition-card-${comp.CompetitionID}`}
-                className="bg-[#111712] border border-white/10 rounded-3xl p-5 sm:p-6 space-y-4 hover:border-[#22c55e]/40 transition-all flex flex-col justify-between shadow-lg"
-              >
-                {/* Header with Profile Picture */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-mono text-[#22c55e] font-bold">
-                      {comp.CompetitionID}
-                    </span>
-                    {getStatusBadge(comp.Status)}
-                  </div>
+              <section key={group.key} className="space-y-3">
+                <h3 className="flex items-center gap-2 text-xs font-bold text-gray-300 uppercase tracking-[0.2em] font-mono">
+                  <span className="w-6 h-px bg-[#22c55e]" /> {group.title}
+                  <span className="text-gray-600">({list.length})</span>
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {list.map((comp) => {
+                    const userReg = regMap.get(comp.CompetitionID);
+                    const isRegOpen = comp.Status?.toUpperCase() === 'OPEN';
+                    const compRegs = allRegistrations.filter((r) => r.CompetitionID === comp.CompetitionID);
+                    const { verified, unverified } = splitRegistrations(compRegs);
+                    const regCount = compRegs.length > 0 ? verified.length : comp.RegisteredCount || 0;
+                    const isFull = regCount >= comp.MaxPlayers;
+                    const capacityPercent = Math.min(100, Math.round((regCount / Math.max(1, comp.MaxPlayers)) * 100));
+                    const isLeague = String(comp.CompetitionType).toUpperCase() === 'LEAGUE';
+                    const img = comp.ProfileImageURL || comp.ImageURL;
 
-                  <div className="flex items-start gap-3.5">
-                    {/* Competition Profile Picture */}
-                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden border border-white/15 bg-black/60 shrink-0 relative shadow-md">
-                      {(comp.ProfileImageURL || comp.ImageURL) ? (
-                        <img
-                          src={comp.ProfileImageURL || comp.ImageURL}
-                          alt={comp.Name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center text-gray-500 bg-gradient-to-br from-[#22c55e]/10 to-transparent">
-                          <Trophy className="w-6 h-6 text-[#22c55e]/40" />
-                          <span className="text-[8px] uppercase font-bold text-gray-400 mt-0.5">eFoot</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-bold text-white tracking-wide leading-snug">
-                        {comp.Name}
-                      </h3>
-                      {comp.Description && (
-                        <p className="text-xs text-gray-400 mt-1 line-clamp-2 leading-relaxed">
-                          {comp.Description}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Badges Bar */}
-                  <div className="flex flex-wrap gap-2 pt-1 text-xs">
-                    <span className="px-2.5 py-0.5 rounded-lg bg-white/5 border border-white/10 text-gray-300 font-mono text-[11px]">
-                      {comp.CompetitionType} • {comp.Format}
-                    </span>
-                    <span className="px-2.5 py-0.5 rounded-lg bg-white/5 border border-white/10 text-gray-300 text-[11px] flex items-center gap-1">
-                      <Shield className="w-3 h-3 text-[#22c55e]" />
-                      {comp.Division || 'OPEN'}
-                    </span>
-                    <span className="px-2.5 py-0.5 rounded-lg bg-[#22c55e]/10 border border-[#22c55e]/20 text-[#22c55e] font-bold text-[11px] flex items-center gap-1">
-                      <Coins className="w-3 h-3" />
-                      {comp.EntryFee > 0 ? `${comp.Currency} ${comp.EntryFee}` : 'Free Entry'}
-                    </span>
-                  </div>
-
-                  {/* Capacity Bar */}
-                  <div className="space-y-1.5 pt-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-gray-400 flex items-center gap-1.5">
-                        <Users className="w-3.5 h-3.5 text-gray-400" />
-                        <span>Roster Capacity:</span>
-                      </span>
-                      <span className="font-mono text-white font-semibold">
-                        {regCount} / {comp.MaxPlayers} slots ({comp.MaxPlayers - regCount} left)
-                      </span>
-                    </div>
-                    <div className="w-full h-2 bg-black/40 rounded-full overflow-hidden border border-white/5">
+                    return (
                       <div
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          capacityPercent >= 90
-                            ? 'bg-amber-400'
-                            : 'bg-[#22c55e]'
-                        }`}
-                        style={{ width: `${capacityPercent}%` }}
-                      />
-                    </div>
-                  </div>
+                        key={comp.CompetitionID}
+                        id={`competition-card-${comp.CompetitionID}`}
+                        className="rounded-3xl overflow-hidden bg-[#111712] border border-white/10 hover:border-[#22c55e]/40 transition-all flex flex-col shadow-lg"
+                      >
+                        {/* Banner */}
+                        <div className="relative px-5 pt-4 pb-10 bg-gradient-to-br from-[#14532d] via-[#0f2a1a] to-[#0c1510]">
+                          <div className="flex items-center justify-between gap-2">
+                            {getStatusBadge(comp.Status)}
+                            <ShareButton
+                              compact
+                              title={comp.Name}
+                              text={getCompetitionShareText(comp, regCount)}
+                              url={getCompetitionShareUrl(comp)}
+                            />
+                          </div>
+                        </div>
 
-                  {/* Dates */}
-                  <div className="grid grid-cols-2 gap-2 pt-2 text-[11px] text-gray-400 border-t border-white/5">
-                    <div className="flex items-center gap-1.5">
-                      <Calendar className="w-3.5 h-3.5 text-gray-500" />
-                      <span>Starts: {formatDate(comp.StartDate)}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-gray-500" />
-                      <span>Reg Ends: {formatDate(comp.RegistrationEnd)}</span>
-                    </div>
-                  </div>
+                        <div className="relative z-10 px-5 -mt-8 flex items-end gap-3.5">
+                          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden border-4 border-[#111712] bg-black shrink-0 shadow-md flex items-center justify-center">
+                            {img ? (
+                              <img src={img} alt={comp.Name} className="w-full h-full object-cover" />
+                            ) : (
+                              <Trophy className="w-7 h-7 text-[#22c55e]/50" />
+                            )}
+                          </div>
+                          <div className="min-w-0 pb-1">
+                            <h3 className="text-base font-bold text-white leading-snug line-clamp-2">{comp.Name}</h3>
+                            <span className="text-[10px] font-mono text-gray-500">{comp.CompetitionID}</span>
+                          </div>
+                        </div>
 
-                  {/* External Docs Links */}
-                  {(comp.RulesDocumentURL || comp.StandingsDocumentURL) && (
-                    <div className="flex items-center gap-3 pt-1 text-xs">
-                      {comp.RulesDocumentURL && (
-                        <a
-                          href={comp.RulesDocumentURL}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-[#22c55e] hover:underline"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          <span>Official Rules</span>
-                        </a>
-                      )}
-                      {comp.StandingsDocumentURL && (
-                        <a
-                          href={comp.StandingsDocumentURL}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-[#22c55e] hover:underline"
-                        >
-                          <BarChart2 className="w-3.5 h-3.5" />
-                          <span>Live Standings</span>
-                        </a>
-                      )}
-                    </div>
-                  )}
-                </div>
+                        <div className="p-5 space-y-4 flex-1 flex flex-col">
+                          {comp.Description && (
+                            <p className="text-xs text-gray-400 line-clamp-2 leading-relaxed">{comp.Description}</p>
+                          )}
 
-                {/* Footer Action */}
-                <div className="pt-3 border-t border-white/5">
-                  {userReg ? (
-                    <div className="flex items-center justify-between p-3 rounded-2xl bg-[#22c55e]/10 border border-[#22c55e]/30">
-                      <div className="flex items-center gap-2 text-xs">
-                        <CheckCircle2 className="w-4 h-4 text-[#22c55e]" />
-                        <span className="text-[#22c55e] font-bold uppercase tracking-wider">
-                          Registered ({userReg.Status})
-                        </span>
+                          <div className="flex flex-wrap gap-2 text-[11px]">
+                            <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-gray-300 font-mono">
+                              {isLeague ? 'League' : 'Knockout'} • {comp.Format}
+                            </span>
+                            <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-gray-300 flex items-center gap-1">
+                              <Shield className="w-3 h-3 text-[#22c55e]" /> {comp.Division || 'OPEN'}
+                            </span>
+                            <span className="px-2.5 py-1 rounded-lg bg-[#22c55e]/10 border border-[#22c55e]/20 text-[#22c55e] font-bold flex items-center gap-1">
+                              <Coins className="w-3 h-3" />
+                              {comp.EntryFee > 0 ? `${comp.Currency} ${comp.EntryFee}` : 'Free Entry'}
+                            </span>
+                            {comp.PrizeAmount ? (
+                              <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 font-bold">
+                                Prize KSh {Number(comp.PrizeAmount).toLocaleString()}
+                              </span>
+                            ) : null}
+                          </div>
+
+                          {/* Capacity */}
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-400 flex items-center gap-1.5">
+                                <Users className="w-3.5 h-3.5" /> Verified players
+                              </span>
+                              <span className="font-mono text-white font-semibold">
+                                {regCount.toLocaleString()} / {comp.MaxPlayers.toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="w-full h-2 bg-black/40 rounded-full overflow-hidden border border-white/5">
+                              <div
+                                className={`h-full rounded-full transition-all duration-300 ${capacityPercent >= 90 ? 'bg-amber-400' : 'bg-[#22c55e]'}`}
+                                style={{ width: `${capacityPercent}%` }}
+                              />
+                            </div>
+                            <div className="flex items-center gap-3 text-[11px] text-gray-500">
+                              <span className="inline-flex items-center gap-1"><BadgeCheck className="w-3 h-3 text-[#22c55e]" />{verified.length} verified</span>
+                              <span className="inline-flex items-center gap-1"><Clock className="w-3 h-3 text-amber-300" />{unverified.length} unverified</span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 pt-3 text-[11px] text-gray-400 border-t border-white/5">
+                            <div className="flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5 text-gray-500" /> Starts {formatDate(comp.StartDate)}</div>
+                            <div className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-gray-500" /> Reg ends {formatDate(comp.RegistrationEnd)}</div>
+                          </div>
+
+                          {/* Quick links */}
+                          <div className="flex flex-wrap gap-2">
+                            <button type="button" onClick={() => setMembersFor(comp)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-semibold text-gray-200 cursor-pointer">
+                              <Users className="w-3.5 h-3.5 text-[#22c55e]" /> Registered members
+                            </button>
+                            <button type="button" onClick={() => setDocView({ comp, kind: 'rules' })} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-semibold text-gray-200 cursor-pointer">
+                              <ScrollText className="w-3.5 h-3.5 text-[#22c55e]" /> Rules
+                            </button>
+                            <button type="button" onClick={() => setDocView({ comp, kind: isLeague ? 'standings' : 'bracket' })} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-semibold text-gray-200 cursor-pointer">
+                              {isLeague ? <BarChart2 className="w-3.5 h-3.5 text-amber-400" /> : <Trophy className="w-3.5 h-3.5 text-amber-400" />}
+                              {isLeague ? 'Standings' : 'Bracket'}
+                            </button>
+                          </div>
+
+                          {/* Footer Action */}
+                          <div className="pt-3 border-t border-white/5 mt-auto">
+                            {userReg ? (
+                              <div className="flex items-center justify-between p-3 rounded-2xl bg-[#22c55e]/10 border border-[#22c55e]/30">
+                                <div className="flex items-center gap-2 text-xs">
+                                  <CheckCircle2 className="w-4 h-4 text-[#22c55e]" />
+                                  <span className="text-[#22c55e] font-bold uppercase tracking-wider">
+                                    {userReg.Status === 'APPROVED' ? 'Verified' : 'Unverified'} ({userReg.Status})
+                                  </span>
+                                </div>
+                                <span className="text-[11px] font-mono text-gray-400">{userReg.RegistrationID}</span>
+                              </div>
+                            ) : !player ? (
+                              <button type="button" onClick={onNavigateToProfile} className="w-full py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 cursor-pointer">
+                                <span>Create Player Profile First</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            ) : !player.Verified ? (
+                              <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-center text-xs text-amber-300">
+                                Profile verification pending administrator approval
+                              </div>
+                            ) : isRegOpen && !isFull ? (
+                              <button id={`register-btn-${comp.CompetitionID}`} type="button" onClick={() => setModalCompetition(comp)} className="w-full py-2.5 rounded-xl bg-[#22c55e] hover:bg-[#16a34a] text-black font-bold text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer">
+                                <Trophy className="w-3.5 h-3.5" />
+                                <span>{isLeague ? 'Join League' : 'Register for Tournament'}</span>
+                              </button>
+                            ) : isFull ? (
+                              <div className="p-3 rounded-2xl bg-white/5 border border-white/5 text-center text-xs text-gray-400 font-mono">ROSTER FULL — CAPACITY REACHED</div>
+                            ) : (
+                              <div className="p-3 rounded-2xl bg-white/5 border border-white/5 text-center text-xs text-gray-400 font-mono">REGISTRATION CLOSED</div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <span className="text-[11px] font-mono text-gray-400">
-                        {userReg.RegistrationID}
-                      </span>
-                    </div>
-                  ) : !player ? (
-                    <button
-                      type="button"
-                      onClick={onNavigateToProfile}
-                      className="w-full py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <span>Create Player Profile First</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  ) : !player.Verified ? (
-                    <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-center text-xs text-amber-300">
-                      Profile verification pending administrator approval
-                    </div>
-                  ) : isRegOpen && !isFull ? (
-                    <button
-                      id={`register-btn-${comp.CompetitionID}`}
-                      type="button"
-                      onClick={() => setModalCompetition(comp)}
-                      className="w-full py-2.5 rounded-xl bg-[#22c55e] hover:bg-[#16a34a] text-black font-bold text-xs uppercase tracking-wider transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Trophy className="w-3.5 h-3.5" />
-                      <span>Register for Tournament</span>
-                    </button>
-                  ) : isFull ? (
-                    <div className="p-3 rounded-2xl bg-white/5 border border-white/5 text-center text-xs text-gray-400 font-mono">
-                      ROSTER FULL — CAPACITY REACHED
-                    </div>
-                  ) : (
-                    <div className="p-3 rounded-2xl bg-white/5 border border-white/5 text-center text-xs text-gray-400 font-mono">
-                      REGISTRATION CLOSED
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
-              </div>
+              </section>
             );
           })}
         </div>
+      )}
+
+      {/* Registered members modal */}
+      {membersFor && (
+        <div className="fixed inset-0 z-[90] bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setMembersFor(null)}>
+          <div className="w-full sm:max-w-2xl max-h-[88vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl bg-[#0c120e] border border-white/10" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-2 px-5 py-3 bg-[#0c120e] border-b border-white/10">
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-white truncate">{membersFor.Name}</div>
+                <div className="text-[10px] text-gray-500 font-mono">{membersFor.CompetitionID}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setDocView({ comp: membersFor, kind: 'registered' })} className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-semibold text-gray-200 cursor-pointer">Gazette</button>
+                <button type="button" onClick={() => setMembersFor(null)} className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 cursor-pointer" aria-label="Close"><X className="w-4 h-4" /></button>
+              </div>
+            </div>
+            <div className="p-3 sm:p-4">
+              <RegisteredMembersPanel
+                registrations={allRegistrations.filter((r) => r.CompetitionID === membersFor.CompetitionID)}
+                currentPlayer={player}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {docView && (
+        <GazetteDocumentViewer
+          kind={docView.kind}
+          competition={docView.comp}
+          registrations={allRegistrations.filter((r) => r.CompetitionID === docView.comp.CompetitionID)}
+          onClose={() => setDocView(null)}
+        />
       )}
 
       {/* Registration Modal */}

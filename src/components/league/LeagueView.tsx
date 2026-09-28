@@ -35,6 +35,10 @@ import { TournamentAdminService, LEAGUE_RULES } from '../../services/tournamentA
 import { SubmitResultModal } from '../matches/SubmitResultModal';
 import { SubmitDisputeModal } from '../matches/SubmitDisputeModal';
 import { CompetitionRegistrationModal } from '../competitions/CompetitionRegistrationModal';
+import { RegisteredMembersPanel } from '../competitions/RegisteredMembersPanel';
+import { CompetitionHero, CompetitionDocumentsShelf, CompetitionSelector } from '../competitions/CompetitionHero';
+import { GazetteDocumentViewer, GazetteKind } from '../common/GazetteDocumentViewer';
+import { splitRegistrations, isDeadRegistration } from '../../utils/competitionUtils';
 
 interface LeagueViewProps {
   standings?: LeagueStanding[];
@@ -59,29 +63,37 @@ export const LeagueView: React.FC<LeagueViewProps> = ({
 }) => {
   const isDark = theme === 'dark';
 
-  const [leagueCompetition, setLeagueCompetition] = useState<Competition | null>(null);
+  const [leagues, setLeagues] = useState<Competition[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [standings, setStandings] = useState<LeagueStanding[]>([]);
   const [fixtures, setFixtures] = useState<MatchFixture[]>([]);
   const [registrations, setRegistrations] = useState<CompetitionRegistration[]>([]);
   const [loading, setLoading] = useState(false);
+  const [docKind, setDocKind] = useState<GazetteKind | null>(null);
 
   // Modals state
   const [selectedMatch, setSelectedMatch] = useState<MatchFixture | null>(null);
   const [disputeMatch, setDisputeMatch] = useState<MatchFixture | null>(null);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
   const [copiedTill, setCopiedTill] = useState(false);
-  const [docNotice, setDocNotice] = useState<string | null>(null);
 
   const [joinSuccess, setJoinSuccess] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const TILL_NUMBER = LEAGUE_RULES.PaymentTill; // 6817863
-  const ENTRY_FEE = LEAGUE_RULES.EntryFee; // 50
-  const MIN_PLAYERS = LEAGUE_RULES.MinPlayers; // 500
-  const MAX_PLAYERS = LEAGUE_RULES.MaxPlayers; // 2048
-  const PRIZE_POOL = LEAGUE_RULES.PrizeAmount; // 5000
+  const ordered = [...leagues].sort((a, b) => {
+    const rank = (c: Competition) => (c.Status === 'OPEN' ? 0 : c.Status === 'IN_PROGRESS' ? 1 : c.Status === 'FULL' ? 2 : 3);
+    return rank(a) - rank(b);
+  });
+  const leagueCompetition = ordered.find((c) => c.CompetitionID === selectedId) || ordered[0] || null;
+  const activeId = leagueCompetition?.CompetitionID;
 
-  const loadLeagueData = async () => {
+  const TILL_NUMBER = leagueCompetition?.PaymentTill || LEAGUE_RULES.PaymentTill;
+  const ENTRY_FEE = leagueCompetition?.EntryFee ?? LEAGUE_RULES.EntryFee;
+  const MIN_PLAYERS = leagueCompetition?.MinPlayers || LEAGUE_RULES.MinPlayers;
+  const MAX_PLAYERS = leagueCompetition?.MaxPlayers || LEAGUE_RULES.MaxPlayers;
+  const PRIZE_POOL = leagueCompetition?.PrizeAmount || LEAGUE_RULES.PrizeAmount;
+
+  const loadLeagueData = async (forId?: string) => {
     setLoading(true);
     setErrorMessage(null);
     try {
@@ -89,19 +101,8 @@ export const LeagueView: React.FC<LeagueViewProps> = ({
         TournamentAdminService.getCompetitions('LEAGUE'),
         TournamentAdminService.getRegistrations(),
       ]);
-
-      const targetComp = comps[0] || null;
-      setLeagueCompetition(targetComp);
+      setLeagues(comps || []);
       setRegistrations(allRegs);
-
-      if (targetComp) {
-        const [liveFixtures, liveStandings] = await Promise.all([
-          TournamentAdminService.getFixtures(targetComp.CompetitionID),
-          TournamentAdminService.calculateLeagueStandings(targetComp.CompetitionID),
-        ]);
-        setFixtures(liveFixtures);
-        setStandings(liveStandings);
-      }
     } catch (err: any) {
       console.warn('LeagueView load error:', err);
     } finally {
@@ -113,47 +114,52 @@ export const LeagueView: React.FC<LeagueViewProps> = ({
     loadLeagueData();
   }, [currentPlayer]);
 
+  // Fixtures + standings follow whichever league is selected
+  useEffect(() => {
+    if (!activeId) {
+      setFixtures([]);
+      setStandings([]);
+      return;
+    }
+    let cancelled = false;
+    Promise.all([
+      TournamentAdminService.getFixtures(activeId),
+      TournamentAdminService.calculateLeagueStandings(activeId),
+    ])
+      .then(([f, st]) => {
+        if (!cancelled) {
+          setFixtures(f);
+          setStandings(st);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, leagues]);
+
   // Registrations for this specific league
   const compRegs = leagueCompetition
     ? registrations.filter((r) => r.CompetitionID === leagueCompetition.CompetitionID)
     : [];
+  const { verified: verifiedRegs, unverified: unverifiedRegs } = splitRegistrations(compRegs);
 
-  const approvedRegistrations = compRegs.filter(
-    (r) => r.Status === 'APPROVED' || r.PaymentStatus === 'PAID'
-  );
-  const pendingRegistrations = compRegs.filter(
-    (r) => r.Status === 'PENDING' || r.PaymentStatus === 'PENDING'
-  );
-
-  const approvedCount = leagueCompetition?.ApprovedCount !== undefined
-    ? leagueCompetition.ApprovedCount
-    : approvedRegistrations.length;
-
+  const approvedCount = compRegs.length > 0 ? verifiedRegs.length : leagueCompetition?.ApprovedCount ?? 0;
   const isFull = approvedCount >= MAX_PLAYERS;
 
   const userRegistration = currentPlayer
-    ? compRegs.find(
-        (r) => r.PlayerID === currentPlayer.PlayerID || r.GoogleUID === currentPlayer.FirebaseUID
-      )
+    ? (() => {
+        const mine = compRegs.filter(
+          (r) => r.PlayerID === currentPlayer.PlayerID || r.GoogleUID === currentPlayer.FirebaseUID
+        );
+        return mine.find((r) => !isDeadRegistration(r)) || mine[0] || null;
+      })()
     : null;
 
   const copyTill = () => {
     navigator.clipboard.writeText(TILL_NUMBER);
     setCopiedTill(true);
     setTimeout(() => setCopiedTill(false), 2000);
-  };
-
-  const handleOpenDoc = (url?: string, docName?: string) => {
-    if (url && url.trim().startsWith('http')) {
-      const a = document.createElement('a');
-      a.href = url.trim();
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      a.click();
-    } else {
-      setDocNotice(`The ${docName || 'Google Document'} is not configured yet.`);
-      setTimeout(() => setDocNotice(null), 3500);
-    }
   };
 
   const handleSubmitResult = async (payload: ResultSubmissionPayload) => {
@@ -206,9 +212,9 @@ export const LeagueView: React.FC<LeagueViewProps> = ({
   };
 
   return (
-    <div id="league-page" className="w-full max-w-5xl mx-auto px-4 py-6 sm:py-10 space-y-8">
+    <div id="league-page" className="w-full max-w-5xl mx-auto px-4 py-6 sm:py-10 space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[#22c55e]/15 text-[#22c55e] border border-[#22c55e]/30">
             <Award className="w-3.5 h-3.5" />
@@ -221,77 +227,21 @@ export const LeagueView: React.FC<LeagueViewProps> = ({
             Chuka eFootball League
           </h1>
           <p className={`text-xs sm:text-sm mt-0.5 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-            Entry: KSh 50 • Till: {TILL_NUMBER} • Minimum: 500 • Maximum: 2,048 Players • Prize: KSh 5,000.
+            Join the league, follow the verified entrants and read the official gazette.
           </p>
         </div>
-
-        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-          <button
-            type="button"
-            onClick={loadLeagueData}
-            disabled={loading}
-            className={`p-2 rounded-xl border transition-all cursor-pointer ${
-              isDark ? 'border-white/10 hover:bg-white/5 text-gray-400 hover:text-white' : 'border-gray-200 hover:bg-gray-100 text-gray-600'
-            }`}
-            title="Refresh table"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-[#22c55e]' : ''}`} />
-          </button>
-
-          {/* Published Google Document Actions */}
-          <button
-            type="button"
-            onClick={() => handleOpenDoc(leagueCompetition?.RulesDocumentURL, 'Official Rules')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs font-semibold text-gray-300 hover:text-white transition-all cursor-pointer"
-          >
-            <FileText className="w-3.5 h-3.5 text-[#22c55e]" />
-            <span>View Rules</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleOpenDoc(leagueCompetition?.RegisteredPlayersDocumentURL, 'Registered Players Document')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs font-semibold text-gray-300 hover:text-white transition-all cursor-pointer"
-          >
-            <Users className="w-3.5 h-3.5 text-[#22c55e]" />
-            <span>View Registered Players</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleOpenDoc(leagueCompetition?.LeagueFixturesDocumentURL, 'League Fixtures Document')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs font-semibold text-gray-300 hover:text-white transition-all cursor-pointer"
-          >
-            <Calendar className="w-3.5 h-3.5 text-[#22c55e]" />
-            <span>View League Fixtures</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleOpenDoc(leagueCompetition?.StandingsDocumentURL, 'League Standings Document')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs font-semibold text-gray-300 hover:text-white transition-all cursor-pointer"
-          >
-            <Table className="w-3.5 h-3.5 text-amber-400" />
-            <span>View League Standings</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleOpenDoc(leagueCompetition?.FinalResultsDocumentURL, 'Final Results Document')}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs font-semibold text-gray-300 hover:text-white transition-all cursor-pointer"
-          >
-            <Award className="w-3.5 h-3.5 text-amber-400" />
-            <span>View Final Results</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => loadLeagueData()}
+          disabled={loading}
+          className={`p-2 rounded-xl border transition-all cursor-pointer ${
+            isDark ? 'border-white/10 hover:bg-white/5 text-gray-400 hover:text-white' : 'border-gray-200 hover:bg-gray-100 text-gray-600'
+          }`}
+          title="Refresh table"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-[#22c55e]' : ''}`} />
+        </button>
       </div>
-
-      {docNotice && (
-        <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2 animate-in fade-in">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{docNotice}</span>
-        </div>
-      )}
 
       {joinSuccess && (
         <div className="p-4 rounded-2xl bg-[#22c55e]/15 border border-[#22c55e]/40 text-[#22c55e] text-xs flex items-center gap-2 animate-in fade-in">
@@ -307,194 +257,48 @@ export const LeagueView: React.FC<LeagueViewProps> = ({
         </div>
       )}
 
-      {/* Honest Empty State if no league configured */}
       {!leagueCompetition ? (
-        <div
-          id="league-empty-state"
-          className="p-10 sm:p-14 text-center rounded-3xl border border-white/10 bg-[#111612]"
-        >
+        <div id="league-empty-state" className="p-10 sm:p-14 text-center rounded-3xl border border-white/10 bg-[#111612]">
           <div className="w-16 h-16 rounded-3xl bg-[#22c55e]/10 border border-[#22c55e]/30 flex items-center justify-center text-[#22c55e] mx-auto mb-4">
             <Award className="w-8 h-8" />
           </div>
-          <h2
-            className="text-xl font-bold uppercase tracking-wide text-white"
-            style={{ fontFamily: "'Chakra Petch', sans-serif" }}
-          >
-            No competitions configured.
+          <h2 className="text-xl font-bold uppercase tracking-wide text-white" style={{ fontFamily: "'Chakra Petch', sans-serif" }}>
+            No league open yet
           </h2>
           <p className="text-xs sm:text-sm max-w-md mx-auto mt-2 leading-relaxed text-gray-400">
-            The league championship schedule will appear here once officially created by administrators.
+            The league schedule appears here once the administrators create it.
           </p>
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Active League Card */}
-          <div
-            className={`p-6 rounded-3xl border ${
-              isDark
-                ? 'bg-gradient-to-r from-[#121c14] to-[#0d140f] border-[#22c55e]/40'
-                : 'bg-emerald-50 border-emerald-200'
-            }`}
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-              <div className="flex items-start gap-4">
-                {/* Competition Profile Picture */}
-                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden border border-white/15 bg-black/60 shrink-0 relative shadow-md">
-                  {(leagueCompetition.ProfileImageURL || leagueCompetition.ImageURL) ? (
-                    <img
-                      src={leagueCompetition.ProfileImageURL || leagueCompetition.ImageURL}
-                      alt={leagueCompetition.Name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-gray-500 bg-gradient-to-br from-[#22c55e]/10 to-transparent">
-                      <Award className="w-8 h-8 text-[#22c55e]/40" />
-                      <span className="text-[8px] uppercase font-bold text-gray-400 mt-0.5">League</span>
-                    </div>
-                  )}
-                </div>
+          <CompetitionSelector competitions={ordered} selectedId={leagueCompetition.CompetitionID} onSelect={setSelectedId} />
 
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#22c55e]/20 text-[#22c55e]">
-                      {isFull ? 'REGISTRATION FULL' : leagueCompetition.Status}
-                    </span>
-                    <span className="text-xs text-gray-400 font-mono">
-                      {leagueCompetition.CompetitionID}
-                    </span>
-                  </div>
+          <CompetitionHero
+            competition={leagueCompetition}
+            verifiedCount={approvedCount}
+            unverifiedCount={unverifiedRegs.length}
+            minPlayers={MIN_PLAYERS}
+            maxPlayers={MAX_PLAYERS}
+            entryFee={ENTRY_FEE}
+            prize={PRIZE_POOL}
+            till={TILL_NUMBER}
+            isGuest={isGuest}
+            userRegistration={userRegistration}
+            registerLabel={`Join League (KSh ${ENTRY_FEE})`}
+            activeLabel="Verified — active league participant"
+            isFull={isFull}
+            copiedTill={copiedTill}
+            onCopyTill={copyTill}
+            onRegister={() => setIsRegisterModalOpen(true)}
+          />
 
-                  <h2 className="text-xl sm:text-2xl font-bold text-white leading-snug">
-                    {leagueCompetition.Name}
-                  </h2>
+          <CompetitionDocumentsShelf isLeague onOpen={setDocKind} />
 
-                  {/* Rules summary chips */}
-                  <div className="flex flex-wrap items-center gap-4 text-xs text-gray-300">
-                    <div className="flex items-center gap-1.5">
-                      <Shield className="w-3.5 h-3.5 text-[#22c55e]" />
-                      <span>Entry Fee: <strong>KSh {ENTRY_FEE}</strong></span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-amber-300 font-semibold">
-                      <Award className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Winner Prize: <strong>KSh {PRIZE_POOL.toLocaleString()}</strong></span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-[#22c55e]" />
-                      <span>
-                        Capacity: <strong className="text-white font-mono">{approvedCount.toLocaleString()} / {MAX_PLAYERS.toLocaleString()}</strong> (Min: {MIN_PLAYERS})
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Player Status / Actions */}
-              <div className="flex flex-col items-start sm:items-end gap-3 shrink-0">
-                {isGuest ? (
-                  <div className="text-xs text-amber-400 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
-                    Sign in with Google to register.
-                  </div>
-                ) : userRegistration ? (
-                  <div className="space-y-1.5 text-right">
-                    {userRegistration.Status === 'APPROVED' ? (
-                      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#22c55e]/20 text-[#22c55e] border border-[#22c55e]/40 text-xs font-bold">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Active League Participant</span>
-                      </div>
-                    ) : userRegistration.Status === 'PENDING' ? (
-                      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs font-bold">
-                        <FileCheck className="w-4 h-4" />
-                        <span>PENDING PAYMENT APPROVAL</span>
-                      </div>
-                    ) : (
-                      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/40 text-xs font-bold">
-                        <AlertCircle className="w-4 h-4" />
-                        <span>Registration {userRegistration.Status}</span>
-                      </div>
-                    )}
-                    <p className="text-[11px] text-gray-400">
-                      {userRegistration.Status === 'PENDING'
-                        ? `Awaiting admin approval for Till ${TILL_NUMBER}.`
-                        : 'Your league standing is live.'}
-                    </p>
-                  </div>
-                ) : isFull ? (
-                  <div className="p-3 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold uppercase tracking-wider">
-                    League registration is full — {MAX_PLAYERS} / {MAX_PLAYERS} players.
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setIsRegisterModalOpen(true)}
-                    className="px-6 py-3 rounded-xl bg-[#22c55e] hover:bg-[#16a34a] text-black font-extrabold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-lg shadow-[#22c55e]/20"
-                  >
-                    Join League (KSh {ENTRY_FEE})
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Till Number Instructions & Copy Button */}
-            <div className="mt-5 pt-4 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-black/30 p-4 rounded-2xl">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                  <CreditCard className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs text-gray-400 font-semibold uppercase">M-Pesa Payment Instructions:</div>
-                  <div className="text-sm font-bold text-white flex items-center gap-2 font-mono">
-                    <span>Pay KSh {ENTRY_FEE} to Till Number:</span>
-                    <span className="text-amber-400 font-black text-base">{TILL_NUMBER}</span>
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={copyTill}
-                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md cursor-pointer self-start sm:self-auto"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>{copiedTill ? '✓ Copied Till!' : 'Copy Till Number'}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* League Capacity & Progress Tracker */}
-          <div className="p-5 rounded-3xl bg-[#111712] border border-white/10 space-y-3">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-[#22c55e]" />
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
-                  Approved League Participation
-                </h3>
-              </div>
-              <span className="text-xs font-mono font-bold text-[#22c55e]">
-                {approvedCount.toLocaleString()} / {MAX_PLAYERS.toLocaleString()} Approved Players (Minimum: {MIN_PLAYERS})
-              </span>
-            </div>
-
-            {/* Progress Bar */}
-            <div className="w-full h-3 bg-black/60 rounded-full overflow-hidden border border-white/10">
-              <div
-                className={`h-full transition-all duration-500 ${
-                  approvedCount >= MIN_PLAYERS ? 'bg-gradient-to-r from-[#22c55e] to-emerald-400' : 'bg-amber-400'
-                }`}
-                style={{ width: `${Math.min(100, (approvedCount / MAX_PLAYERS) * 100)}%` }}
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1">
-              <span>Only approved registrations count toward capacity. Pending payments do not count.</span>
-              <span className="font-semibold text-amber-300">
-                {approvedCount >= MAX_PLAYERS
-                  ? `League registration is full — ${MAX_PLAYERS.toLocaleString()} / ${MAX_PLAYERS.toLocaleString()} players.`
-                  : approvedCount >= MIN_PLAYERS
-                  ? `Minimum reached (${MIN_PLAYERS})! Registration open until ${MAX_PLAYERS.toLocaleString()}.`
-                  : `Requires ${MIN_PLAYERS - approvedCount} more approved competitors to reach minimum threshold.`}
-              </span>
-            </div>
-          </div>
+          <RegisteredMembersPanel
+            registrations={compRegs}
+            currentPlayer={currentPlayer}
+            loading={loading && registrations.length === 0}
+          />
 
           {/* League Standings Table */}
           <div className="space-y-4">
@@ -517,8 +321,11 @@ export const LeagueView: React.FC<LeagueViewProps> = ({
                   No standings available yet.
                 </h3>
                 <p className="text-xs text-gray-400 max-w-sm mx-auto">
-                  Standings will calculate automatically once official match results are confirmed.
+                  The table fills in automatically as results are confirmed: 3 points for a win, 1 for a draw, 0 for a loss.
                 </p>
+                <button type="button" onClick={() => setDocKind('standings')} className="text-xs font-bold text-[#22c55e] hover:underline cursor-pointer">
+                  See how positions are decided
+                </button>
               </div>
             ) : (
               <div
@@ -602,7 +409,8 @@ export const LeagueView: React.FC<LeagueViewProps> = ({
 
             {fixtures.length === 0 ? (
               <div className="p-8 text-center rounded-3xl border border-white/10 bg-black/20 text-gray-400 text-xs">
-                No league fixtures generated yet. Dynamic fixtures will be scheduled once approved competitors join.
+                Fixtures are published in matchdays once {MIN_PLAYERS.toLocaleString()} players are verified ({approvedCount.toLocaleString()} so far).{' '}
+                <button type="button" onClick={() => setDocKind('fixtures')} className="text-[#22c55e] font-bold underline cursor-pointer">See how it will work</button>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -687,6 +495,17 @@ export const LeagueView: React.FC<LeagueViewProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {docKind && leagueCompetition && (
+        <GazetteDocumentViewer
+          kind={docKind}
+          competition={leagueCompetition}
+          registrations={compRegs}
+          fixtures={fixtures}
+          standings={standings}
+          onClose={() => setDocKind(null)}
+        />
       )}
 
       {/* Registration Modal */}

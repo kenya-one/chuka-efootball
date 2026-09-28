@@ -1179,8 +1179,27 @@ function doPost(e) {
       var grIdToken = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
       var grAuth = grIdToken ? verifyFirebaseIdToken_(grIdToken) : null;
       var regs = getRegistrationsFromDatabase_(grSs, body.competitionId || "");
-      if (action === "my-registrations" && grAuth && grAuth.valid) {
-        regs = regs.filter(function(r) { return r.PlayerID === grAuth.uid || r.PlayerID === grAuth.email; });
+      var grIsAdmin = !!(grAuth && grAuth.valid && (grAuth.isAdmin || isAuthorizedAdminEmail_(grAuth.email)));
+      if (action === "my-registrations") {
+        regs = (grAuth && grAuth.valid)
+          ? regs.filter(function(r) { return r.PlayerID === grAuth.uid || r.PlayerID === grAuth.email; })
+          : [];
+      } else if (!grIsAdmin) {
+        // Everyone may see WHO is registered and whether they are verified,
+        // but never payment IDs, verifier identity or other people's account IDs.
+        regs = regs.map(function(r) {
+          var mine = !!(grAuth && grAuth.valid && (r.PlayerID === grAuth.uid || r.PlayerID === grAuth.email));
+          return {
+            RegistrationID: r.RegistrationID,
+            CompetitionID: r.CompetitionID,
+            PlayerID: mine ? r.PlayerID : "",
+            eFootballUsername: r.eFootballUsername,
+            Status: r.Status,
+            PaymentStatus: r.PaymentStatus,
+            RegisteredAt: r.RegisteredAt,
+            VerifiedAt: r.VerifiedAt
+          };
+        });
       }
       return createJsonResponse_({ success: true, registrations: regs, data: { registrations: regs } });
     }
@@ -1215,6 +1234,11 @@ function doPost(e) {
 
     // 16. Action: adminGetPayments / getPayments
     if (action === "adminGetPayments" || action === "getPayments" || action === "get-payments" || action === "admin-payments") {
+      var gpIdToken = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
+      var gpAdminAuth = verifyFirebaseIdToken_(gpIdToken);
+      if (!gpAdminAuth || !gpAdminAuth.valid || (!gpAdminAuth.isAdmin && !isAuthorizedAdminEmail_(gpAdminAuth.email))) {
+        return createJsonResponse_({ success: false, message: "Unauthorized: Administrator privileges required." });
+      }
       var gpSs = getDatabaseSpreadsheet_();
       var payments = getPaymentsFromDatabase_(gpSs, body.competitionId || "");
       return createJsonResponse_({ success: true, payments: payments, data: { payments: payments } });
@@ -1293,6 +1317,11 @@ function doPost(e) {
 
     // 23. Action: getAdminOverview / admin-overview
     if (action === "getAdminOverview" || action === "admin-overview") {
+      var gaoIdToken = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
+      var gaoAdminAuth = verifyFirebaseIdToken_(gaoIdToken);
+      if (!gaoAdminAuth || !gaoAdminAuth.valid || (!gaoAdminAuth.isAdmin && !isAuthorizedAdminEmail_(gaoAdminAuth.email))) {
+        return createJsonResponse_({ success: false, message: "Unauthorized: Administrator privileges required." });
+      }
       var gaoSs = getDatabaseSpreadsheet_();
       var overview = getAdminOverviewFromDatabase_(gaoSs);
       return createJsonResponse_({ success: true, overview: overview });
@@ -1300,6 +1329,11 @@ function doPost(e) {
 
     // 24. Action: adminGetPlayers / admin-players
     if (action === "adminGetPlayers" || action === "admin-players") {
+      var agpIdToken = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
+      var agpAdminAuth = verifyFirebaseIdToken_(agpIdToken);
+      if (!agpAdminAuth || !agpAdminAuth.valid || (!agpAdminAuth.isAdmin && !isAuthorizedAdminEmail_(agpAdminAuth.email))) {
+        return createJsonResponse_({ success: false, message: "Unauthorized: Administrator privileges required." });
+      }
       var agpSs = getDatabaseSpreadsheet_();
       var playersList = getAllPlayersFromDatabase_(agpSs, body.search || "");
       return createJsonResponse_({ success: true, players: playersList });
@@ -2145,6 +2179,102 @@ function getOrCreateCompetitionsParentFolder_() {
 }
 
 /**
+ * Applies the "Official University Information Gazette" look to a Google Doc:
+ * masthead, notice number, dateline, serif typography, ruled tables and a
+ * signature/seal footer. Call right before doc.saveAndClose().
+ */
+var APP_TIMEZONE_ = "Africa/Nairobi";
+
+function gazetteStyleDoc_(doc, docTitle, compName, compId, code) {
+  try {
+    var body = doc.getBody();
+    var year = new Date().getFullYear();
+    var suffix = String(compId || "XXX").replace(/[^A-Za-z0-9]/g, "").slice(-6).toUpperCase();
+    var notice = "CEG/" + year + "/" + suffix + "/" + code;
+    var dateStr = Utilities.formatDate(new Date(), APP_TIMEZONE_, "d MMMM yyyy");
+    var INK = "#16130D", GREEN = "#166534", PAPER_HEAD = "#ECE6D0";
+    var CENTER = DocumentApp.HorizontalAlignment.CENTER;
+
+    // 1. Restyle the existing content
+    body.setMarginLeft(54).setMarginRight(54).setMarginTop(46).setMarginBottom(46);
+    for (var i = 0; i < body.getNumChildren(); i++) {
+      var el = body.getChild(i);
+      var type = el.getType();
+      if (type === DocumentApp.ElementType.PARAGRAPH) {
+        var para = el.asParagraph();
+        var h = para.getHeading();
+        para.editAsText().setFontFamily("Georgia");
+        if (h === DocumentApp.ParagraphHeading.HEADING1) {
+          para.setAlignment(CENTER).setFontSize(16).setBold(true).setForegroundColor(INK);
+          para.editAsText().setText(para.getText().toUpperCase());
+        } else if (h === DocumentApp.ParagraphHeading.HEADING2) {
+          para.setFontSize(11).setBold(true).setForegroundColor(INK).setSpacingBefore(12);
+          para.editAsText().setText(para.getText().toUpperCase());
+        } else if (h === DocumentApp.ParagraphHeading.SUBTITLE) {
+          para.setAlignment(CENTER).setItalic(true).setFontSize(10).setForegroundColor("#4A4536");
+        } else {
+          para.setFontSize(10).setForegroundColor(INK);
+        }
+      } else if (type === DocumentApp.ElementType.TABLE) {
+        var table = el.asTable();
+        table.setBorderColor(INK).setBorderWidth(0.75);
+        table.editAsText().setFontSize(9).setFontFamily("Georgia").setForegroundColor(INK);
+        if (table.getNumRows() > 1) {
+          var head = table.getRow(0);
+          for (var c = 0; c < head.getNumCells(); c++) {
+            head.getCell(c).setBackgroundColor(PAPER_HEAD).editAsText().setBold(true);
+          }
+        }
+      } else if (type === DocumentApp.ElementType.LIST_ITEM) {
+        el.asListItem().setFontSize(10).setFontFamily("Georgia").setForegroundColor(INK);
+      }
+    }
+
+    // 2. Masthead, inserted at the top in reading order
+    var idx = 0;
+    body.insertParagraph(idx++, "CHUKA UNIVERSITY")
+      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
+      .setFontSize(9).setBold(true).setForegroundColor(GREEN).setFontFamily("Georgia").setSpacingAfter(0);
+    body.insertParagraph(idx++, "eFOOTBALL ESPORTS GAZETTE")
+      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
+      .setFontSize(24).setBold(true).setForegroundColor(INK).setFontFamily("Georgia").setSpacingBefore(0).setSpacingAfter(0);
+    body.insertParagraph(idx++, "Official Information of the Chuka eFootball Community")
+      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
+      .setFontSize(9).setItalic(true).setBold(false).setForegroundColor("#4A4536").setFontFamily("Georgia");
+    body.insertHorizontalRule(idx++);
+    body.insertParagraph(idx++, "Chuka, Kenya   |   " + dateStr + "   |   Gazette Notice No. " + notice)
+      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
+      .setFontSize(9).setBold(false).setItalic(false).setForegroundColor(INK).setFontFamily("Georgia");
+    body.insertHorizontalRule(idx++);
+    body.insertParagraph(idx++, String(docTitle).toUpperCase())
+      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
+      .setFontSize(13).setBold(true).setForegroundColor(INK).setFontFamily("Georgia").setSpacingBefore(8).setSpacingAfter(0);
+    body.insertParagraph(idx++, String(compName || ""))
+      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
+      .setFontSize(11).setItalic(true).setBold(false).setForegroundColor("#3B3626").setFontFamily("Georgia").setSpacingAfter(10);
+
+    // 3. Footer: signatures, seal and fine print
+    body.appendParagraph("").setSpacingBefore(18);
+    var sig = body.appendTable([[
+      "______________________\nEsports Coordinator\nChuka eFootball Community",
+      "[ OFFICIAL SEAL ]",
+      "______________________\nCompetition Administrator\nHelp Desk: Sidney Wafula (0180752220)"
+    ]]);
+    sig.setBorderWidth(0);
+    sig.editAsText().setFontSize(8).setFontFamily("Georgia").setForegroundColor(INK);
+    for (var sc = 0; sc < 3; sc++) {
+      sig.getCell(0, sc).getChild(0).asParagraph().setAlignment(CENTER);
+    }
+    sig.getCell(0, 1).editAsText().setBold(true).setForegroundColor(GREEN);
+    body.appendHorizontalRule();
+    body.appendParagraph("Notice " + notice + "  |  Issued " + dateStr + "  |  Fair Play Standard  |  Chuka eFootball")
+      .setAlignment(CENTER).setFontSize(7).setItalic(true).setForegroundColor("#6B654F").setFontFamily("Georgia");
+  } catch (gzErr) {
+    Logger.log("[Gazette Style Warning] " + gzErr.message);
+  }
+}
+
+/**
  * Creates dedicated Google Drive folder and official Google Docs for a competition.
  */
 function createCompetitionDriveFolderAndDocs_(comp) {
@@ -2267,6 +2397,8 @@ function createCompetitionDriveFolderAndDocs_(comp) {
     rBody.appendHorizontalRule();
     rBody.appendParagraph("Issued by Chuka eFootball League Tournament Directorate").setItalic(true);
 
+    gazetteStyleDoc_(rulesDoc, "Official Competition Rules & Regulations", compName, compId, "RR");
+
     rulesDoc.saveAndClose();
     var rRes = moveAndShareDoc_(rulesDoc);
     createdDocs.rulesDocId = rRes.id;
@@ -2295,6 +2427,8 @@ function createCompetitionDriveFolderAndDocs_(comp) {
     ];
     regBody.appendTable(regTable);
     regBody.appendParagraph("(Roster will populate as player payments are verified by administration.)").setItalic(true);
+
+    gazetteStyleDoc_(regDoc, "Register of Entrants", compName, compId, "RE");
 
     regDoc.saveAndClose();
     var regRes = moveAndShareDoc_(regDoc);
@@ -2333,6 +2467,8 @@ function createCompetitionDriveFolderAndDocs_(comp) {
       ];
       brBody.appendTable(roundsTable);
 
+      gazetteStyleDoc_(brDoc, "Knockout Bracket Notice", compName, compId, "KB");
+
       brDoc.saveAndClose();
       var brRes = moveAndShareDoc_(brDoc);
       createdDocs.bracketDocId = brRes.id;
@@ -2360,7 +2496,9 @@ function createCompetitionDriveFolderAndDocs_(comp) {
         ["Fixture ID", "Round", "Home Player", "Away Player", "Score", "Status"]
       ];
       fBody.appendTable(fTable);
-      fBody.appendParagraph("(Fixtures will appear here as each matchday is generated.)").setItalic(true);
+      fBody.appendParagraph("Fixtures are published here matchday by matchday once the league starts. Win = 3 points, Draw = 1 point, Loss = 0 points.").setItalic(true);
+
+      gazetteStyleDoc_(fixDoc, "League Fixtures Notice", compName, compId, "LF");
 
       fixDoc.saveAndClose();
       var fRes = moveAndShareDoc_(fixDoc);
@@ -2390,6 +2528,8 @@ function createCompetitionDriveFolderAndDocs_(comp) {
       ];
       sBody.appendTable(sTable);
       sBody.appendParagraph("(Standings table will update live as match results are confirmed.)").setItalic(true);
+
+      gazetteStyleDoc_(stdDoc, "Official League Standings", compName, compId, "LS");
 
       stdDoc.saveAndClose();
       var sRes = moveAndShareDoc_(stdDoc);
@@ -2421,6 +2561,8 @@ function createCompetitionDriveFolderAndDocs_(comp) {
     ];
     finBody.appendTable(finSummaryTable);
     finBody.appendParagraph("(Official final results will be archived here upon tournament completion.)").setItalic(true);
+
+    gazetteStyleDoc_(finDoc, "Final Results & Awards Notice", compName, compId, "FR");
 
     finDoc.saveAndClose();
     var finRes = moveAndShareDoc_(finDoc);
@@ -2473,9 +2615,9 @@ function syncRegisteredPlayersDocument_(spreadsheet, compId) {
       ["Remaining Capacity", String(Math.max(0, comp.MaxPlayers - approvedRegs.length))]
     ]);
 
-    body.appendParagraph("APPROVED PLAYERS").setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    body.appendParagraph("PART A - VERIFIED ENTRANTS").setHeading(DocumentApp.ParagraphHeading.HEADING2);
     if (approvedRegs.length === 0) {
-      body.appendParagraph("No player registrations have been approved yet.");
+      body.appendParagraph("No entrant has been verified yet. Names appear here once the administration confirms payment.").setItalic(true);
     } else {
       var tableRows = [["#", "Player Name", "eFootball Gamer Tag", "Registration Status", "Payment Status"]];
       for (var a = 0; a < approvedRegs.length; a++) {
@@ -2491,6 +2633,20 @@ function syncRegisteredPlayersDocument_(spreadsheet, compId) {
       body.appendTable(tableRows);
     }
 
+    body.appendParagraph("PART B - UNVERIFIED ENTRANTS (AWAITING PAYMENT APPROVAL)").setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    if (pendingRegs.length === 0) {
+      body.appendParagraph("There are no entries awaiting verification.").setItalic(true);
+    } else {
+      var pendRows = [["#", "eFootball Gamer Tag", "Date Registered", "Status"]];
+      for (var pq = 0; pq < pendingRegs.length; pq++) {
+        pendRows.push([String(pq + 1), pendingRegs[pq].eFootballUsername || "-", String(pendingRegs[pq].RegisteredAt || "-"), "Unverified"]);
+      }
+      body.appendTable(pendRows);
+    }
+
+    body.appendParagraph("An unverified entrant is not yet in the draw. Verification follows confirmation of payment.").setItalic(true);
+
+    gazetteStyleDoc_(doc, "Register of Entrants", comp.Name, compId, "RE");
     doc.saveAndClose();
     Logger.log("[Doc Sync] Updated Registered Players document for " + compId);
   } catch (err) {
@@ -2520,7 +2676,12 @@ function syncKnockoutBracketDocument_(spreadsheet, compId) {
 
     var fixtures = getFixturesFromDatabase_(spreadsheet, compId);
     if (fixtures.length === 0) {
-      body.appendParagraph("Bracket will be generated once 1,024 approved players are registered.");
+      body.appendParagraph("The bracket has not been drawn yet. HOW IT WILL WORK:").setBold(true);
+      body.appendListItem("Players register and pay the entry fee to the official Till number.");
+      body.appendListItem("The administration verifies each payment. Only verified players enter the draw.");
+      body.appendListItem("When the minimum number of players is verified, opponents are drawn at random and Round 1 is published here.");
+      body.appendListItem("Single elimination: the winner advances, the loser is out. Extra time and penalties settle level games.");
+      body.appendListItem("Both players submit the final-score screenshot before each round deadline. The last player standing is champion.");
     } else {
       var rounds = {};
       for (var f = 0; f < fixtures.length; f++) {
@@ -2550,6 +2711,7 @@ function syncKnockoutBracketDocument_(spreadsheet, compId) {
       }
     }
 
+    gazetteStyleDoc_(doc, "Knockout Bracket Notice", comp.Name, compId, "KB");
     doc.saveAndClose();
     Logger.log("[Doc Sync] Updated Knockout Bracket document for " + compId);
   } catch (err) {
@@ -2579,7 +2741,11 @@ function syncLeagueFixturesDocument_(spreadsheet, compId) {
 
     var fixtures = getFixturesFromDatabase_(spreadsheet, compId);
     if (fixtures.length === 0) {
-      body.appendParagraph("Fixtures will be generated once the season commences.");
+      body.appendParagraph("Fixtures have not been published yet. HOW IT WILL WORK:").setBold(true);
+      body.appendListItem("Verified players are placed in one league table.");
+      body.appendListItem("The administration generates the fixture list and publishes it in matchdays.");
+      body.appendListItem("Each fixture is played before its matchday deadline and reported with a screenshot.");
+      body.appendListItem("Win = 3 points, Draw = 1 point, Loss = 0 points. Top of the table at the close wins the prize.");
     } else {
       var rounds = {};
       for (var f = 0; f < fixtures.length; f++) {
@@ -2608,6 +2774,7 @@ function syncLeagueFixturesDocument_(spreadsheet, compId) {
       }
     }
 
+    gazetteStyleDoc_(doc, "League Fixtures Notice", comp.Name, compId, "LF");
     doc.saveAndClose();
     Logger.log("[Doc Sync] Updated League Fixtures document for " + compId);
   } catch (err) {
@@ -2654,6 +2821,7 @@ function syncLeagueStandingsDocument_(spreadsheet, compId) {
     }
     body.appendTable(sRows);
 
+    gazetteStyleDoc_(doc, "Official League Standings", comp.Name, compId, "LS");
     doc.saveAndClose();
     Logger.log("[Doc Sync] Updated League Standings document for " + compId);
   } catch (err) {
@@ -2690,6 +2858,7 @@ function syncFinalResultsDocument_(spreadsheet, compId, winnerId, winnerName, pr
       ["Completion Date", new Date().toISOString()]
     ]);
 
+    gazetteStyleDoc_(doc, "Final Results & Awards Notice", compId, compId, "FR");
     doc.saveAndClose();
     Logger.log("[Doc Sync] Updated Final Results document for " + compId);
   } catch (err) {

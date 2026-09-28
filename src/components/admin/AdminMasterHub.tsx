@@ -12,7 +12,6 @@ import { AdminDisputesView } from './AdminDisputesView';
 import { AdminWhatsAppView } from './AdminWhatsAppView';
 import { AdminAuditLogsView } from './AdminAuditLogsView';
 import { AdminCompetitionsView } from './AdminCompetitionsView';
-import { AdminDocsInvitesView } from './AdminDocsInvitesView';
 import {
   LayoutDashboard,
   Trophy,
@@ -27,7 +26,6 @@ import {
   MessageCircle,
   FileText,
   Layers,
-  Send,
 } from 'lucide-react';
 
 export type AdminSection =
@@ -42,7 +40,6 @@ export type AdminSection =
   | 'disputes'
   | 'whatsapp'
   | 'audit'
-  | 'docs'
   | 'announcements';
 
 export const AdminMasterHub: React.FC = () => {
@@ -235,20 +232,6 @@ export const AdminMasterHub: React.FC = () => {
           </button>
 
           {/* Audit Logs */}
-          {/* Live Docs & Invites */}
-          <button
-            type="button"
-            onClick={() => setActiveSection('docs')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
-              activeSection === 'docs'
-                ? 'bg-[#22c55e] text-black shadow-lg shadow-[#22c55e]/20'
-                : 'text-gray-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Send className="w-3.5 h-3.5" />
-            <span>Docs &amp; Invites</span>
-          </button>
-
           <button
             type="button"
             onClick={() => setActiveSection('audit')}
@@ -285,7 +268,6 @@ export const AdminMasterHub: React.FC = () => {
         {activeSection === 'disputes' && <AdminDisputesView />}
         {activeSection === 'whatsapp' && <AdminWhatsAppView />}
         {activeSection === 'announcements' && <AdminAnnouncementsView />}
-        {activeSection === 'docs' && <AdminDocsInvitesView />}
         {activeSection === 'audit' && <AdminAuditLogsView />}
       </div>
     </div>

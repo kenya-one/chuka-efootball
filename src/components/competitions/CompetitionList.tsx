@@ -18,8 +18,6 @@ import { Competition, Player, CompetitionRegistration } from '../../types';
 import { CompetitionApiService } from '../../api/client';
 import { TournamentAdminService } from '../../services/tournamentAdminService';
 import { CompetitionRegistrationModal } from './CompetitionRegistrationModal';
-import { InviteShareButton } from '../invites/InviteShareButton';
-import { LiveDocsLinks } from '../common/LiveDocsLinks';
 
 interface CompetitionListProps {
   player: Player | null;
@@ -196,8 +194,6 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
             <span>Refresh</span>
           </button>
         </div>
-
-        <LiveDocsLinks />
 
         {/* Filter Controls */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-white/5">
@@ -461,7 +457,6 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
                       REGISTRATION CLOSED
                     </div>
                   )}
-                  {player && <InviteShareButton competition={comp} />}
                 </div>
               </div>
             );

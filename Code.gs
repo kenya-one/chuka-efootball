@@ -733,18 +733,6 @@ function doGet(e) {
       return createJsonResponse_({ success: true, announcements: getAnnouncementsFromDatabase_(ss, params.competitionId || "") });
     }
 
-    if (action === "getMatchRules" || action === "get-match-rules") {
-      var gmrRules = getMatchRulesFromDatabase_(getDatabaseSpreadsheet_());
-      return createJsonResponse_({ success: true, rules: gmrRules, data: { rules: gmrRules } });
-    }
-    if (action === "getLiveDocs" || action === "get-live-docs") {
-      var gldInfo = getLiveDocsInfo_();
-      return createJsonResponse_({ success: true, docs: gldInfo, data: gldInfo });
-    }
-    if (action === "getInvite" || action === "get-invite") {
-      return createJsonResponse_(previewInvite_(getDatabaseSpreadsheet_(), params.code));
-    }
-
     Logger.log("[HTTP GET] Health check request received");
     return createJsonResponse_({
       success: true,
@@ -1313,19 +1301,8 @@ function doPost(e) {
     // 24. Action: adminGetPlayers / admin-players
     if (action === "adminGetPlayers" || action === "admin-players") {
       var agpSs = getDatabaseSpreadsheet_();
-      var playersList = getAllPlayersFromDatabase_(agpSs, body.search || params.search || "", {
-        status: body.status || params.status || "",
-        verified: body.verified || params.verified || ""
-      });
-      var allForCounts = getAllPlayersFromDatabase_(agpSs, "", {});
-      var pCounts = { total: allForCounts.length, pending: 0, active: 0, suspended: 0 };
-      for (var pc = 0; pc < allForCounts.length; pc++) {
-        var ps = String(allForCounts[pc].Status).toUpperCase();
-        if (ps === "ACTIVE") pCounts.active++;
-        else if (ps === "SUSPENDED") pCounts.suspended++;
-        else pCounts.pending++;
-      }
-      return createJsonResponse_({ success: true, players: playersList, counts: pCounts, data: { players: playersList, counts: pCounts } });
+      var playersList = getAllPlayersFromDatabase_(agpSs, body.search || "");
+      return createJsonResponse_({ success: true, players: playersList });
     }
 
     // 25. Action: getWhatsAppGroups
@@ -1468,74 +1445,6 @@ function doPost(e) {
       var galSs = getDatabaseSpreadsheet_();
       var logs = getAuditLogsFromDatabase_(galSs, body.limit || 100);
       return createJsonResponse_({ success: true, logs: logs });
-    }
-
-    // ===== Admin: verify / suspend a player profile =====
-    if (action === "admin-player-verify" || action === "admin-player-suspend" || action === "verifyPlayer" || action === "suspendPlayer") {
-      var vpAuth = requireAuth_(body);
-      if (!isAdminAuth_(vpAuth)) return unauthorizedResponse_();
-      var vpTarget = body.PlayerID || body.playerId || body.player_id || body.userId;
-      var vpVerify = (action === "admin-player-verify" || action === "verifyPlayer");
-      return createJsonResponse_(setPlayerStatusInDatabase_(getDatabaseSpreadsheet_(), vpTarget, vpVerify ? "ACTIVE" : "SUSPENDED", vpAuth.email));
-    }
-
-    // ===== Official rules (public) =====
-    if (action === "getMatchRules" || action === "get-match-rules") {
-      var mrRules = getMatchRulesFromDatabase_(getDatabaseSpreadsheet_());
-      return createJsonResponse_({ success: true, rules: mrRules, data: { rules: mrRules } });
-    }
-
-    // ===== Live Google Docs: links (public) / rebuild now (admin) =====
-    if (action === "getLiveDocs" || action === "get-live-docs") {
-      var ldInfo = getLiveDocsInfo_();
-      return createJsonResponse_({ success: true, docs: ldInfo, data: ldInfo });
-    }
-    if (action === "syncLiveDocs" || action === "sync-live-docs") {
-      var sdAuth = requireAuth_(body);
-      if (!isAdminAuth_(sdAuth)) return unauthorizedResponse_();
-      var sdSs = getDatabaseSpreadsheet_();
-      var sdAppUrl = sanitizeAppUrl_(body.appUrl);
-      if (sdAppUrl && !PropertiesService.getScriptProperties().getProperty("APP_URL")) {
-        PropertiesService.getScriptProperties().setProperty("APP_URL", sdAppUrl);
-      }
-      var sdWhat = String(body.what || "all");
-      var sdErrors = [];
-      if (sdWhat === "all" || sdWhat === "rules") {
-        try { syncMasterRulesDocument_(sdSs); } catch (sdE1) { sdErrors.push("Rules doc: " + sdE1.message); }
-      }
-      if (sdWhat === "all" || sdWhat === "roster") {
-        try { syncLiveRosterDocument_(sdSs, true); } catch (sdE2) { sdErrors.push("Roster doc: " + sdE2.message); }
-      }
-      logAudit_(sdSs, sdAuth.uid, sdAuth.email, "LIVE_DOCS_SYNCED", "Document", "MASTER", { what: sdWhat, errors: sdErrors });
-      var sdInfo = getLiveDocsInfo_();
-      if (sdErrors.length) return createJsonResponse_({ success: false, message: sdErrors.join(" | "), docs: sdInfo, data: sdInfo });
-      return createJsonResponse_({ success: true, message: "Google Docs refreshed.", docs: sdInfo, data: sdInfo });
-    }
-
-    // ===== Invitations =====
-    if (action === "getInvite" || action === "get-invite") {
-      return createJsonResponse_(previewInvite_(getDatabaseSpreadsheet_(), body.code || params.code));
-    }
-    if (action === "createInvite" || action === "create-invite") {
-      var ciAuth = requireAuth_(body);
-      if (!ciAuth) return createJsonResponse_({ success: false, message: "Sign in to create invitations." });
-      return createJsonResponse_(createInviteInDatabase_(getDatabaseSpreadsheet_(), ciAuth, body));
-    }
-    if (action === "acceptInvite" || action === "accept-invite") {
-      var aiAuth = requireAuth_(body);
-      if (!aiAuth) return createJsonResponse_({ success: false, message: "Sign in to accept this invitation." });
-      return createJsonResponse_(acceptInviteInDatabase_(getDatabaseSpreadsheet_(), aiAuth, body.code));
-    }
-    if (action === "listInvites" || action === "list-invites") {
-      var liAuth = requireAuth_(body);
-      if (!liAuth) return createJsonResponse_({ success: false, message: "Authentication required." });
-      var liList = listInvitesFromDatabase_(getDatabaseSpreadsheet_(), liAuth, body.competitionId || "");
-      return createJsonResponse_({ success: true, invites: liList, data: { invites: liList } });
-    }
-    if (action === "revokeInvite" || action === "revoke-invite") {
-      var riAuth = requireAuth_(body);
-      if (!riAuth) return createJsonResponse_({ success: false, message: "Authentication required." });
-      return createJsonResponse_(revokeInviteInDatabase_(getDatabaseSpreadsheet_(), riAuth, body.inviteId || body.InviteID));
     }
 
     // Fallback for unrecognized POST actions
@@ -2310,10 +2219,11 @@ function createCompetitionDriveFolderAndDocs_(comp) {
     var rBody = rulesDoc.getBody();
     rBody.clear();
 
-    setDocMargins_(rBody);
-    renderBrandHeader_(rBody, "Official Gazette & Competition Regulations");
-    rBody.appendParagraph("Document Reference: " + compId + " | Published: " + nowStr)
-      .setAttributes(docStyle_({ size: 8, color: "#555555", align: DocumentApp.HorizontalAlignment.CENTER, after: 6 }));
+    var titlePara = rBody.appendParagraph("CHUKA eFOOTBALL COMMUNITY");
+    titlePara.setHeading(DocumentApp.ParagraphHeading.HEADING1);
+    rBody.appendParagraph("OFFICIAL GAZETTE & COMPETITION REGULATIONS").setHeading(DocumentApp.ParagraphHeading.SUBTITLE);
+    rBody.appendParagraph("Document Reference: " + compId + " | Published: " + nowStr);
+    rBody.appendHorizontalRule();
 
     rBody.appendParagraph("1. TOURNAMENT SPECIFICATIONS").setHeading(DocumentApp.ParagraphHeading.HEADING2);
     var specTable = [
@@ -2354,18 +2264,8 @@ function createCompetitionDriveFolderAndDocs_(comp) {
 
     rBody.appendParagraph("5. OFFICIAL COMMUNICATION CHANNELS").setHeading(DocumentApp.ParagraphHeading.HEADING2);
     rBody.appendParagraph("Official announcements and matchmaking desks are hosted on the Chuka eFootballHub PWA and verified administrator WhatsApp channels.");
-    renderSectionTitle_(rBody, "Official Match Rules");
-    try {
-      var compRulesList = getMatchRulesFromDatabase_(getDatabaseSpreadsheet_());
-      renderRulesTables_(rBody, compRulesList, isLeague ? "League" : "Knockout");
-    } catch (rulesErr) {
-      Logger.log("[Doc Warning] Could not embed official rules: " + rulesErr.message);
-    }
-    renderRulesNote_(rBody);
-    rBody.appendParagraph("Issued by Chuka eFootball League Tournament Directorate")
-      .setAttributes(docStyle_({ size: 8, italic: true, color: "#444444", align: DocumentApp.HorizontalAlignment.CENTER, before: 6 }));
-    renderDocFooter_(rBody);
-    finalizeDoc_(rBody);
+    rBody.appendHorizontalRule();
+    rBody.appendParagraph("Issued by Chuka eFootball League Tournament Directorate").setItalic(true);
 
     rulesDoc.saveAndClose();
     var rRes = moveAndShareDoc_(rulesDoc);
@@ -3274,7 +3174,6 @@ function getRegistrationsFromDatabase_(spreadsheet, compId) {
       RegistrationID: String(reg.registration_id || ""),
       CompetitionID: String(reg.competition_id || ""),
       PlayerID: String(reg.player_id || ""),
-      PlayerName: String(reg.player_name || ""),
       eFootballUsername: String(reg.efootball_username || reg.player_name || ""),
       Status: String(reg.status || "PENDING"),
       PaymentStatus: String(reg.payment_status || "PENDING"),
@@ -3409,7 +3308,6 @@ function registerPlayerInDatabase_(spreadsheet, authUser, compId, efootballUsern
     SpreadsheetApp.flush();
     logAudit_(spreadsheet, uid, email, "REGISTRATION_SUBMITTED", "Registration", regId, { competitionId: compId, paymentId: payId, amount: compFee, till: "6817863" });
     try { lock.releaseLock(); } catch(e) {}
-    queueDocsSync_("roster");
 
     return {
       success: true,
@@ -3436,10 +3334,6 @@ function registerPlayerInDatabase_(spreadsheet, authUser, compId, efootballUsern
  * Subordinate to payment confirmation: Cannot approve a registration whose payment is not confirmed.
  */
 function updateRegistrationStatusInDatabase_(spreadsheet, regId, status, verifiedBy) {
-  status = String(status || "").toUpperCase();
-  if (status !== "APPROVED" && status !== "REJECTED") {
-    return { success: false, message: "Invalid registration status: " + status };
-  }
   var sheet = getOrCreateSheet_(spreadsheet, REGISTRATIONS_SHEET_NAME, REGISTRATIONS_HEADERS);
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
@@ -3448,71 +3342,38 @@ function updateRegistrationStatusInDatabase_(spreadsheet, regId, status, verifie
   var rawValues = sheet.getRange(1, 1, lastRow, lastCol).getValues();
   var headers = rawValues[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
   var idCol = headers.indexOf("registration_id");
-  var compCol = headers.indexOf("competition_id");
   var statusCol = headers.indexOf("status");
   var payStatusCol = headers.indexOf("payment_status");
   var payIdCol = headers.indexOf("payment_id");
   var vAtCol = headers.indexOf("verified_at");
   var vByCol = headers.indexOf("verified_by");
 
-  var rowNum = -1, payId = "", compId = "";
   for (var r = 1; r < rawValues.length; r++) {
     if (String(rawValues[r][idCol] || "").trim() === String(regId).trim()) {
-      rowNum = r + 1;
-      payId = payIdCol !== -1 ? String(rawValues[r][payIdCol] || "").trim() : "";
-      compId = compCol !== -1 ? String(rawValues[r][compCol] || "").trim() : "";
-      break;
+      var rowNum = r + 1;
+      var curPayStatus = payStatusCol !== -1 ? String(rawValues[r][payStatusCol] || "").trim().toUpperCase() : "PENDING";
+      var associatedPayId = payIdCol !== -1 ? String(rawValues[r][payIdCol] || "").trim() : "";
+
+      if (status === "APPROVED" && curPayStatus !== "CONFIRMED" && curPayStatus !== "PAID") {
+        return {
+          success: false,
+          message: "Cannot approve registration: Associated payment is not confirmed. Approvals must be processed by confirming payment via the Payments tab."
+        };
+      }
+
+      if (statusCol !== -1) sheet.getRange(rowNum, statusCol + 1).setValue(status);
+      if (status === "REJECTED" && payStatusCol !== -1) {
+        sheet.getRange(rowNum, payStatusCol + 1).setValue("REJECTED");
+      }
+      if (vAtCol !== -1) sheet.getRange(rowNum, vAtCol + 1).setValue(new Date().toISOString());
+      if (vByCol !== -1) sheet.getRange(rowNum, vByCol + 1).setValue(verifiedBy);
+      SpreadsheetApp.flush();
+
+      logAudit_(spreadsheet, verifiedBy, verifiedBy, "REGISTRATION_STATUS_UPDATED", "Registration", regId, { status: status, paymentId: associatedPayId });
+      return { success: true, message: "Registration updated successfully." };
     }
   }
-  if (rowNum === -1) return { success: false, message: "Registration " + regId + " not found." };
-
-  var okMessage = status === "APPROVED"
-    ? "Player verified - registration approved and payment confirmed."
-    : "Registration rejected.";
-
-  // Preferred path: drive the linked payment so Payments + Registrations stay consistent.
-  if (payId) {
-    var paySheet = getOrCreateSheet_(spreadsheet, PAYMENTS_SHEET_NAME, PAYMENTS_HEADERS);
-    var payLast = paySheet.getLastRow();
-    var payExists = false;
-    if (payLast > 1) {
-      var payRaw = paySheet.getRange(1, 1, payLast, paySheet.getLastColumn()).getValues();
-      var payIdx = payRaw[0].map(function(h) { return String(h || "").trim().toLowerCase(); }).indexOf("payment_id");
-      for (var p = 1; p < payRaw.length; p++) {
-        if (payIdx !== -1 && String(payRaw[p][payIdx] || "").trim() === payId) { payExists = true; break; }
-      }
-    }
-    if (payExists) {
-      var payRes = updatePaymentStatusInDatabase_(spreadsheet, payId, status === "APPROVED" ? "CONFIRMED" : "REJECTED", verifiedBy);
-      if (payRes && payRes.success) {
-        queueDocsSync_("roster");
-        return { success: true, message: okMessage };
-      }
-      return payRes;
-    }
-  }
-
-  // Fallback: registration has no payment row - update the registration directly (with capacity check).
-  if (status === "APPROVED" && compId) {
-    var comp = findCompetitionById_(spreadsheet, compId);
-    if (comp) {
-      var isKO = String(comp.CompetitionType).toUpperCase() === "KNOCKOUT";
-      var cap = isKO ? 1024 : 2048;
-      var curStatus = statusCol !== -1 ? String(rawValues[rowNum - 1][statusCol] || "").toUpperCase() : "";
-      if (curStatus !== "APPROVED" && Number(comp.ApprovedCount || 0) >= cap) {
-        return { success: false, message: "Cannot approve: tournament has reached maximum capacity of " + cap.toLocaleString() + " approved players." };
-      }
-    }
-  }
-  if (statusCol !== -1) sheet.getRange(rowNum, statusCol + 1).setValue(status);
-  if (payStatusCol !== -1) sheet.getRange(rowNum, payStatusCol + 1).setValue(status === "APPROVED" ? "CONFIRMED" : "REJECTED");
-  if (vAtCol !== -1) sheet.getRange(rowNum, vAtCol + 1).setValue(new Date().toISOString());
-  if (vByCol !== -1) sheet.getRange(rowNum, vByCol + 1).setValue(verifiedBy);
-  SpreadsheetApp.flush();
-  logAudit_(spreadsheet, verifiedBy, verifiedBy, "REGISTRATION_STATUS_UPDATED", "Registration", regId, { status: status, paymentId: payId });
-  try { syncRegisteredPlayersDocument_(spreadsheet, compId); } catch (e) {}
-  queueDocsSync_("roster");
-  return { success: true, message: okMessage };
+  return { success: false, message: "Registration " + regId + " not found." };
 }
 
 /**
@@ -3688,7 +3549,6 @@ function updatePaymentStatusInDatabase_(spreadsheet, payId, status, verifiedBy) 
 
     logAudit_(spreadsheet, verifiedBy, verifiedBy, "PAYMENT_STATUS_UPDATED", "Payment", payId, { status: canonicalPayStatus, competitionId: targetCompId });
     try { lock.releaseLock(); } catch(e) {}
-    queueDocsSync_("roster");
 
     return {
       success: true,
@@ -3931,8 +3791,7 @@ function getAdminOverviewFromDatabase_(spreadsheet) {
 /**
  * Returns all players from Users sheet with search filtering.
  */
-function getAllPlayersFromDatabase_(spreadsheet, searchQuery, filters) {
-  filters = filters || {};
+function getAllPlayersFromDatabase_(spreadsheet, searchQuery) {
   var sheet = getOrCreateUsersSheet_(spreadsheet);
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
@@ -3942,8 +3801,6 @@ function getAllPlayersFromDatabase_(spreadsheet, searchQuery, filters) {
   var headers = rawValues[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
   var cols = getUsersColumnIndices_(headers);
   var query = String(searchQuery || "").trim().toLowerCase();
-  var wantStatus = String(filters.status || "").trim().toUpperCase();
-  var wantVerified = String(filters.verified || "").trim().toLowerCase();
   var players = [];
 
   for (var r = 1; r < rawValues.length; r++) {
@@ -3954,11 +3811,20 @@ function getAllPlayersFromDatabase_(spreadsheet, searchQuery, filters) {
       var matchEmail = profile.email.toLowerCase().indexOf(query) !== -1;
       if (!matchName && !matchEmail) continue;
     }
-    var obj = playerProfileToAdminObject_(profile);
-    if (wantStatus && wantStatus !== "ALL" && String(obj.Status).toUpperCase() !== wantStatus) continue;
-    if ((wantVerified === "true" || wantVerified === "verified") && !obj.Verified) continue;
-    if ((wantVerified === "false" || wantVerified === "unverified") && obj.Verified) continue;
-    players.push(obj);
+    players.push({
+      PlayerID: profile.user_id || profile.email,
+      GoogleUID: profile.user_id,
+      DisplayName: profile.display_name,
+      PhotoURL: profile.photo_url,
+      ClassID: profile.class_id,
+      Phone: profile.phone,
+      WhatsAppNumber: profile.whatsapp,
+      Status: profile.status,
+      Role: profile.role,
+      CreatedAt: profile.created_at,
+      UpdatedAt: profile.updated_at,
+      SquadImageURL: profile.squad_image_url
+    });
   }
   return players;
 }
@@ -4994,940 +4860,4 @@ function testBackendSetup() {
     Logger.log("✗ Diagnostic failed: " + err.message);
     return false;
   }
-}
-
-/**
- * =========================================================================
- * AUTOMATION MODULE
- *  - Official Match Rules Google Doc (branded, logos, tables) from MatchRules sheet
- *  - LIVE Registered Players Google Doc (per Knockout / per League, by name)
- *  - Admin player verification (verify / suspend)
- *  - Invitations to Knockouts and Leagues (link + email)
- *  - Auto-refresh triggers (run setupAutomation() ONCE from the editor)
- * =========================================================================
- */
-
-var CHUKA_CREST_URL = "https://aicenter.chuka.ac.ke/wp-content/uploads/2026/03/chuka-uni-logo-HD-1-2-Photoroom.png";
-var EFOOTBALL_LOGO_URL = "https://images.seeklogo.com/logo-png/45/1/efootball-logo-png_seeklogo-451310.png";
-var HELP_DESK_NAME = "Sidney Wafula";
-var HELP_DESK_PHONE = "0180752220";
-var DOC_FONT = "Georgia";
-
-var MATCH_RULES_SHEET_NAME = "MatchRules";
-var MATCH_RULES_HEADERS = ["rule_id", "competition", "rule_title", "rule_content", "active", "updated_at"];
-var DEFAULT_MATCH_RULES = [
-  ["RULE-KO-01", "Knockout", "Tournament Format & Brackets", "Single elimination knockout brackets. The winner of each match advances to the subsequent round while the loser is eliminated. All brackets are synchronized via Google Sheets."],
-  ["RULE-KO-02", "Knockout", "Match Scheduling & Deadlines", "Players must schedule and complete their designated knockout fixture before the published round deadline. Failure to communicate may result in a forfeit walkover."],
-  ["RULE-KO-03", "Knockout", "Extra Time & Penalties", "If scores are level at 90 minutes in knockout fixtures, extra time and penalty shootouts must be played immediately to determine the advancing player."],
-  ["RULE-KO-04", "Knockout", "Screenshot & Result Verification", "Both players must take a clear end-game screenshot displaying final score, player gamertags, and match statistics. The winner submits the result; the opponent must confirm."],
-  ["RULE-LG-01", "League", "League Format & Points System", "Round-robin league format. Three points for a win, one point for a draw, and zero points for a loss. Goal difference is used as the primary tiebreaker."],
-  ["RULE-LG-02", "League", "Match Scheduling & Deadlines", "All league fixtures must be completed within the designated matchweek window. Players are responsible for coordinating and reporting results before the deadline."],
-  ["RULE-LG-03", "League", "Draws & Points Allocation", "League matches can end in a draw. Both players receive one point each. No extra time or penalties are played in league fixtures."],
-  ["RULE-LG-04", "League", "Screenshot & Result Verification", "Both players must take a clear end-game screenshot displaying final score, player gamertags, and match statistics. The winner submits the result; the opponent must confirm."]
-];
-
-var INVITES_SHEET_NAME = "Invites";
-var INVITES_HEADERS = [
-  "invite_id", "code", "competition_id", "competition_name", "competition_type",
-  "invite_type", "invited_email", "invited_by_uid", "invited_by_name", "status",
-  "uses", "max_uses", "created_at", "expires_at", "last_used_at", "accepted_by"
-];
-
-/* ---------- small auth helpers ---------- */
-function requireAuth_(body) {
-  var t = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
-  if (!t) return null;
-  var a = verifyFirebaseIdToken_(t);
-  return (a && a.valid) ? a : null;
-}
-function isAdminAuth_(a) {
-  return !!(a && (a.isAdmin || isAuthorizedAdminEmail_(a.email)));
-}
-function unauthorizedResponse_() {
-  return createJsonResponse_({ success: false, message: "Unauthorized: Administrator privileges required." });
-}
-
-/* =========================================================================
- * MATCH RULES (sheet = source of truth)
- * ========================================================================= */
-function getOrCreateMatchRulesSheet_(ss) {
-  var sheet = getOrCreateSheet_(ss, MATCH_RULES_SHEET_NAME, MATCH_RULES_HEADERS);
-  if (sheet.getLastRow() <= 1) {
-    var nowIso = new Date().toISOString();
-    for (var i = 0; i < DEFAULT_MATCH_RULES.length; i++) {
-      var r = DEFAULT_MATCH_RULES[i];
-      sheet.appendRow([r[0], r[1], r[2], r[3], true, nowIso]);
-    }
-    try { sheet.setColumnWidth(3, 260); sheet.setColumnWidth(4, 620); } catch (e) {}
-    SpreadsheetApp.flush();
-  }
-  return sheet;
-}
-
-function getMatchRulesFromDatabase_(ss) {
-  var sheet = getOrCreateMatchRulesSheet_(ss);
-  var lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return [];
-  var raw = sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).getValues();
-  var h = raw[0].map(function(x) { return String(x || "").trim().toLowerCase(); });
-  var ix = function(n) { return h.indexOf(n); };
-  var out = [];
-  for (var r = 1; r < raw.length; r++) {
-    var row = raw[r];
-    var title = ix("rule_title") !== -1 ? String(row[ix("rule_title")] || "").trim() : "";
-    var content = ix("rule_content") !== -1 ? String(row[ix("rule_content")] || "").trim() : "";
-    if (!title && !content) continue;
-    var activeRaw = ix("active") !== -1 ? row[ix("active")] : true;
-    var active = !(activeRaw === false || String(activeRaw).trim().toUpperCase() === "FALSE" || String(activeRaw).trim().toUpperCase() === "NO");
-    var comp = ix("competition") !== -1 ? String(row[ix("competition")] || "").trim() : "";
-    var compNorm = comp.toLowerCase().indexOf("league") !== -1 ? "League" : "Knockout";
-    out.push({
-      RuleID: ix("rule_id") !== -1 ? String(row[ix("rule_id")] || "").trim() : "",
-      Competition: compNorm,
-      RuleTitle: title,
-      RuleContent: content,
-      Active: active,
-      UpdatedAt: ix("updated_at") !== -1 ? String(row[ix("updated_at")] || "") : ""
-    });
-  }
-  return out;
-}
-
-/* =========================================================================
- * GOOGLE DOC RENDERING HELPERS (mirror the web "official document" style)
- * ========================================================================= */
-function docStyle_(o) {
-  var A = DocumentApp.Attribute;
-  var s = {};
-  if (o.bold !== undefined) s[A.BOLD] = o.bold;
-  if (o.italic !== undefined) s[A.ITALIC] = o.italic;
-  if (o.size) s[A.FONT_SIZE] = o.size;
-  if (o.font) s[A.FONT_FAMILY] = o.font;
-  if (o.color) s[A.FOREGROUND_COLOR] = o.color;
-  if (o.bg) s[A.BACKGROUND_COLOR] = o.bg;
-  if (o.align) s[A.HORIZONTAL_ALIGNMENT] = o.align;
-  if (o.before !== undefined) s[A.SPACING_BEFORE] = o.before;
-  if (o.after !== undefined) s[A.SPACING_AFTER] = o.after;
-  return s;
-}
-
-function fetchImageBlob_(urls) {
-  for (var i = 0; i < urls.length; i++) {
-    var u = urls[i];
-    if (!u) continue;
-    try {
-      var res = UrlFetchApp.fetch(u, {
-        muteHttpExceptions: true,
-        followRedirects: true,
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; ChukaEFootballHub/1.0)" }
-      });
-      if (res.getResponseCode() === 200) {
-        var blob = res.getBlob();
-        var ct = String(blob.getContentType() || "").toLowerCase();
-        if (ct.indexOf("image/") === 0 && ct.indexOf("svg") === -1) return blob;
-      }
-    } catch (e) {
-      Logger.log("[Image Fetch] " + u + " -> " + e.message);
-    }
-  }
-  return null;
-}
-
-function getAppAssetUrl_(file) {
-  var base = PropertiesService.getScriptProperties().getProperty("APP_URL") || "";
-  return base ? base.replace(/\/+$/, "") + "/" + file : "";
-}
-
-function setDocMargins_(body) {
-  try {
-    body.setMarginTop(40);
-    body.setMarginBottom(40);
-    body.setMarginLeft(56);
-    body.setMarginRight(56);
-  } catch (e) {}
-}
-
-function placeLogo_(cell, blob, align, height) {
-  var p = cell.getChild(0).asParagraph();
-  p.setAlignment(align);
-  p.setSpacingAfter(0);
-  if (!blob) return;
-  try {
-    var img = p.appendInlineImage(blob);
-    var w = img.getWidth(), h = img.getHeight();
-    if (w > 0 && h > 0) {
-      img.setHeight(height).setWidth(Math.round(w * height / h));
-    }
-  } catch (e) {
-    Logger.log("[Logo] " + e.message);
-  }
-}
-
-/** Header: crest (left) | CHUKA eFOOTBALL + subtitle (center) | eFootball logo (right) */
-function renderBrandHeader_(body, subtitle) {
-  var crest = fetchImageBlob_([CHUKA_CREST_URL, getAppAssetUrl_("chuka-crest.png")]);
-  var logo = fetchImageBlob_([EFOOTBALL_LOGO_URL, getAppAssetUrl_("efootball-logo.png")]);
-
-  var t = body.appendTable([["", "", ""]]);
-  t.setBorderWidth(0);
-  t.setColumnWidth(0, 90);
-  t.setColumnWidth(1, 270);
-  t.setColumnWidth(2, 90);
-  var left = t.getCell(0, 0), mid = t.getCell(0, 1), right = t.getCell(0, 2);
-  var VA = DocumentApp.VerticalAlignment.CENTER;
-  left.setVerticalAlignment(VA); mid.setVerticalAlignment(VA); right.setVerticalAlignment(VA);
-
-  placeLogo_(left, crest, DocumentApp.HorizontalAlignment.LEFT, 50);
-  placeLogo_(right, logo, DocumentApp.HorizontalAlignment.RIGHT, 40);
-
-  var title = mid.getChild(0).asParagraph();
-  title.setText("CHUKA eFOOTBALL");
-  title.setAttributes(docStyle_({ bold: true, size: 22, color: "#000000", align: DocumentApp.HorizontalAlignment.CENTER, after: 0, before: 0 }));
-  var sub = mid.appendParagraph(String(subtitle || "Official University eFootball Esports Hub").toUpperCase());
-  sub.setAttributes(docStyle_({ bold: false, size: 8, color: "#333333", align: DocumentApp.HorizontalAlignment.CENTER, after: 0, before: 2 }));
-
-  body.appendHorizontalRule();
-  var pw = body.appendParagraph("Powered by Google Sheets + Apps Script");
-  pw.setAttributes(docStyle_({ bold: false, italic: false, size: 8, color: "#555555", align: DocumentApp.HorizontalAlignment.CENTER, after: 8, before: 2 }));
-}
-
-function renderSectionTitle_(body, text) {
-  var p = body.appendParagraph(String(text).toUpperCase());
-  p.setAttributes(docStyle_({ bold: true, size: 15, color: "#000000", align: DocumentApp.HorizontalAlignment.CENTER, before: 6, after: 2 }));
-  body.appendHorizontalRule();
-}
-
-function renderSubsectionTitle_(body, text) {
-  var p = body.appendParagraph(String(text).toUpperCase());
-  p.setAttributes(docStyle_({ bold: true, size: 11, color: "#222222", align: DocumentApp.HorizontalAlignment.LEFT, before: 12, after: 4 }));
-}
-
-/** Grey-header bordered table like the website's .doc-table */
-function styleDocTable_(table, colWidths, dense) {
-  table.setBorderColor("#aaaaaa");
-  table.setBorderWidth(0.75);
-  var body = {};
-  body[DocumentApp.Attribute.FONT_SIZE] = 9;
-  body[DocumentApp.Attribute.FONT_FAMILY] = DOC_FONT;
-  body[DocumentApp.Attribute.FOREGROUND_COLOR] = "#111111";
-  try { table.setAttributes(body); } catch (e) {}
-  if (colWidths) {
-    for (var c = 0; c < colWidths.length; c++) {
-      try { table.setColumnWidth(c, colWidths[c]); } catch (e) {}
-    }
-  }
-  var hdr = table.getRow(0);
-  for (var i = 0; i < hdr.getNumCells(); i++) {
-    var cell = hdr.getCell(i);
-    cell.setBackgroundColor("#f2f2f2");
-    cell.setAttributes(docStyle_({ bold: true, size: 8, color: "#000000", font: DOC_FONT }));
-  }
-  if (!dense) {
-    for (var r = 1; r < table.getNumRows(); r++) {
-      var row = table.getRow(r);
-      for (var k = 0; k < Math.min(2, row.getNumCells()); k++) {
-        row.getCell(k).setAttributes(docStyle_({ bold: true, size: 9, color: "#222222", font: DOC_FONT }));
-      }
-    }
-  }
-}
-
-function renderRulesTables_(body, rules, typeFilter) {
-  var sets = [
-    { key: "Knockout", label: "\uD83C\uDFC6 Knockout Rules", prefix: "RULE-KO-0" },
-    { key: "League", label: "\uD83E\uDD47 League Rules", prefix: "RULE-LG-0" }
-  ];
-  for (var s = 0; s < sets.length; s++) {
-    var set = sets[s];
-    if (typeFilter && typeFilter !== set.key) continue;
-    var list = [];
-    for (var i = 0; i < rules.length; i++) {
-      if (rules[i].Competition === set.key && rules[i].Active !== false) list.push(rules[i]);
-    }
-    if (list.length === 0) {
-      for (var d = 0; d < DEFAULT_MATCH_RULES.length; d++) {
-        if (DEFAULT_MATCH_RULES[d][1] === set.key) {
-          list.push({ RuleID: DEFAULT_MATCH_RULES[d][0], RuleTitle: DEFAULT_MATCH_RULES[d][2], RuleContent: DEFAULT_MATCH_RULES[d][3] });
-        }
-      }
-    }
-    renderSubsectionTitle_(body, set.label);
-    var rows = [["Rule ID", "Title", "Description"]];
-    for (var j = 0; j < list.length; j++) {
-      rows.push([list[j].RuleID || (set.prefix + (j + 1)), list[j].RuleTitle, list[j].RuleContent]);
-    }
-    var tbl = body.appendTable(rows);
-    styleDocTable_(tbl, [72, 128, 250], false);
-  }
-}
-
-function renderRulesNote_(body) {
-  var t = body.appendTable([["Google Sheets Live Rules: These regulations are linked to the MatchRules sheet. Updates made by tournament administrators in Google Sheets will automatically reflect in this document."]]);
-  t.setBorderColor("#888888");
-  t.setBorderWidth(0.75);
-  var cell = t.getCell(0, 0);
-  cell.setBackgroundColor("#f9f9f9");
-  var p = cell.getChild(0).asParagraph();
-  p.setAttributes(docStyle_({ size: 8, color: "#444444", bold: false, font: DOC_FONT, before: 2, after: 2 }));
-  try { p.editAsText().setBold(0, 24, true).setForegroundColor(0, 24, "#000000"); } catch (e) {}
-  body.appendParagraph("").setAttributes(docStyle_({ size: 4, after: 0, before: 0 }));
-}
-
-function renderDocFooter_(body) {
-  body.appendHorizontalRule();
-  var t = body.appendTable([["Help Desk: " + HELP_DESK_NAME + " (" + HELP_DESK_PHONE + ")", "Fair Play Standard \u2022 Chuka eFootball"]]);
-  t.setBorderWidth(0);
-  t.setColumnWidth(0, 250);
-  t.setColumnWidth(1, 200);
-  var l = t.getCell(0, 0).getChild(0).asParagraph();
-  l.setAttributes(docStyle_({ size: 8, color: "#333333", font: DOC_FONT, after: 0 }));
-  try {
-    var txt = l.editAsText();
-    var start = "Help Desk: ".length;
-    var end = l.getText().length - 1;
-    txt.setBold(start, end, true).setLinkUrl(start, end, "tel:" + HELP_DESK_PHONE);
-  } catch (e) {}
-  var r = t.getCell(0, 1).getChild(0).asParagraph();
-  r.setAttributes(docStyle_({ size: 8, italic: true, color: "#444444", font: DOC_FONT, align: DocumentApp.HorizontalAlignment.RIGHT, after: 0 }));
-}
-
-function finalizeDoc_(body) {
-  try { body.editAsText().setFontFamily(DOC_FONT); } catch (e) {}
-  try {
-    var first = body.getChild(0);
-    if (body.getNumChildren() > 1 && first.getType() === DocumentApp.ElementType.PARAGRAPH && first.asParagraph().getText() === "") {
-      first.removeFromParent();
-    }
-  } catch (e) {}
-}
-
-/* =========================================================================
- * MANAGED (AUTO-CREATED) DOCUMENTS
- * ========================================================================= */
-function getHubFolder_() {
-  var it = DriveApp.getFoldersByName("Chuka eFootballHub");
-  return it.hasNext() ? it.next() : DriveApp.createFolder("Chuka eFootballHub");
-}
-
-function getOrCreateManagedDoc_(propKey, title) {
-  var props = PropertiesService.getScriptProperties();
-  var id = props.getProperty(propKey);
-  if (id) {
-    try {
-      var f = DriveApp.getFileById(id);
-      if (!f.isTrashed()) return DocumentApp.openById(id);
-    } catch (e) {
-      Logger.log("[Managed Doc] Stored doc unavailable, recreating: " + e.message);
-    }
-  }
-  var doc = DocumentApp.create(title);
-  var file = DriveApp.getFileById(doc.getId());
-  try {
-    getHubFolder_().addFile(file);
-    DriveApp.getRootFolder().removeFile(file);
-  } catch (e) { Logger.log("[Managed Doc] move failed: " + e.message); }
-  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { Logger.log("[Managed Doc] share failed: " + e.message); }
-  props.setProperty(propKey, doc.getId());
-  return doc;
-}
-
-function docUrlFromProp_(propKey) {
-  var id = PropertiesService.getScriptProperties().getProperty(propKey);
-  return id ? "https://docs.google.com/document/d/" + id + "/edit" : "";
-}
-
-function getLiveDocsInfo_() {
-  return {
-    rulesUrl: docUrlFromProp_("MASTER_RULES_DOC_ID"),
-    rosterUrl: docUrlFromProp_("LIVE_ROSTER_DOC_ID"),
-    rulesUpdatedAt: PropertiesService.getScriptProperties().getProperty("MASTER_RULES_UPDATED_AT") || "",
-    rosterUpdatedAt: PropertiesService.getScriptProperties().getProperty("LIVE_ROSTER_UPDATED_AT") || ""
-  };
-}
-
-/** Official Match Rules document: ALL rules, same look as the website document. */
-function syncMasterRulesDocument_(ss) {
-  var rules = getMatchRulesFromDatabase_(ss);
-  var doc = getOrCreateManagedDoc_("MASTER_RULES_DOC_ID", "Chuka eFootball Hub - Official Match Rules");
-  var body = doc.getBody();
-  body.clear();
-  setDocMargins_(body);
-  renderBrandHeader_(body, "Official University eFootball Esports Hub");
-  renderSectionTitle_(body, "Official Match Rules");
-  renderRulesTables_(body, rules, null);
-  renderRulesNote_(body);
-  renderDocFooter_(body);
-  finalizeDoc_(body);
-  var url = doc.getUrl();
-  doc.saveAndClose();
-  PropertiesService.getScriptProperties().setProperty("MASTER_RULES_UPDATED_AT", new Date().toISOString());
-  Logger.log("[Rules Doc] Updated: " + url);
-  return { id: doc.getId(), url: url };
-}
-
-function computeRosterSignature_(comps, regs) {
-  var parts = [];
-  for (var i = 0; i < comps.length; i++) {
-    parts.push([comps[i].CompetitionID, comps[i].Name, comps[i].Status, comps[i].MaxPlayers].join("|"));
-  }
-  for (var j = 0; j < regs.length; j++) {
-    parts.push([regs[j].RegistrationID, regs[j].Status, regs[j].PaymentStatus, regs[j].PlayerName, regs[j].eFootballUsername].join("|"));
-  }
-  return Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, parts.join("\n")));
-}
-
-function safeDisplayName_(reg) {
-  var n = String(reg.PlayerName || "").trim();
-  if (!n || n.indexOf("@") !== -1) {
-    var alt = String(reg.eFootballUsername || "").trim();
-    if (alt && alt.indexOf("@") === -1) return alt;
-    if (n.indexOf("@") !== -1) return n.split("@")[0];
-    return "Unnamed player";
-  }
-  return n;
-}
-
-function acquireSyncMutex_(key) {
-  var p = PropertiesService.getScriptProperties();
-  var t = Number(p.getProperty(key) || 0);
-  if (t && (Date.now() - t) < 5 * 60 * 1000) return false;
-  p.setProperty(key, String(Date.now()));
-  return true;
-}
-function releaseSyncMutex_(key) {
-  try { PropertiesService.getScriptProperties().deleteProperty(key); } catch (e) {}
-}
-
-/** LIVE roster: one section per competition (Knockouts first, then Leagues), by player name. */
-function syncLiveRosterDocument_(ss, force) {
-  if (!acquireSyncMutex_("ROSTER_SYNC_RUNNING")) {
-    Logger.log("[Roster Doc] Another sync is running; skipping.");
-    return { skipped: true, url: docUrlFromProp_("LIVE_ROSTER_DOC_ID") };
-  }
-  try {
-    var props = PropertiesService.getScriptProperties();
-    var comps = getCompetitionsFromDatabase_(ss);
-    var regs = getRegistrationsFromDatabase_(ss, "");
-    var sig = computeRosterSignature_(comps, regs);
-    if (!force && props.getProperty("LIVE_ROSTER_SIG") === sig && props.getProperty("LIVE_ROSTER_DOC_ID")) {
-      return { skipped: true, unchanged: true, url: docUrlFromProp_("LIVE_ROSTER_DOC_ID") };
-    }
-
-    var byComp = {};
-    var totalVerified = 0, totalPending = 0;
-    for (var i = 0; i < regs.length; i++) {
-      var r = regs[i];
-      var st = String(r.Status || "").toUpperCase();
-      if (st === "REJECTED" || st === "CANCELLED") continue;
-      var verified = (st === "APPROVED" || String(r.PaymentStatus).toUpperCase() === "CONFIRMED" || String(r.PaymentStatus).toUpperCase() === "PAID");
-      (byComp[r.CompetitionID] = byComp[r.CompetitionID] || []).push({ reg: r, verified: verified });
-      if (verified) totalVerified++; else totalPending++;
-    }
-
-    var doc = getOrCreateManagedDoc_("LIVE_ROSTER_DOC_ID", "Chuka eFootball Hub - LIVE Registered Players");
-    var body = doc.getBody();
-    body.clear();
-    setDocMargins_(body);
-    renderBrandHeader_(body, "Live Registered Players");
-    renderSectionTitle_(body, "Live Registered Players");
-
-    var stamp = Utilities.formatDate(new Date(), "Africa/Nairobi", "EEE, d MMM yyyy 'at' HH:mm") + " EAT";
-    var meta = body.appendParagraph("Last updated: " + stamp + "  \u2022  This document refreshes automatically as players register and admins verify them.");
-    meta.setAttributes(docStyle_({ size: 8, italic: true, color: "#555555", align: DocumentApp.HorizontalAlignment.CENTER, after: 6 }));
-
-    var sum = body.appendTable([
-      ["Competitions", String(comps.length), "Verified players", String(totalVerified), "Awaiting verification", String(totalPending)]
-    ]);
-    sum.setBorderColor("#aaaaaa"); sum.setBorderWidth(0.75);
-    for (var sc = 0; sc < 6; sc++) {
-      sum.getCell(0, sc).setAttributes(docStyle_({ size: 9, bold: (sc % 2 === 0), color: "#111111", font: DOC_FONT, bg: (sc % 2 === 0) ? "#f2f2f2" : "#ffffff" }));
-    }
-
-    var groups = [
-      { type: "KNOCKOUT", title: "\uD83C\uDFC6 Knockout Tournaments" },
-      { type: "LEAGUE", title: "\uD83E\uDD47 Leagues" }
-    ];
-    var statusRank = { OPEN: 0, IN_PROGRESS: 1, CLOSED: 2, COMPLETED: 3 };
-    for (var g = 0; g < groups.length; g++) {
-      var list = comps.filter(function(c) { return String(c.CompetitionType || "").toUpperCase() === groups[g].type; });
-      list.sort(function(a, b) {
-        var ra = statusRank[a.Status] !== undefined ? statusRank[a.Status] : 9;
-        var rb = statusRank[b.Status] !== undefined ? statusRank[b.Status] : 9;
-        return ra - rb;
-      });
-      renderSubsectionTitle_(body, groups[g].title);
-      if (list.length === 0) {
-        body.appendParagraph("No " + (groups[g].type === "KNOCKOUT" ? "knockout tournaments" : "leagues") + " have been created yet.")
-          .setAttributes(docStyle_({ size: 9, italic: true, color: "#555555" }));
-        continue;
-      }
-      for (var ci = 0; ci < list.length; ci++) {
-        var c = list[ci];
-        var entries = byComp[c.CompetitionID] || [];
-        entries.sort(function(a, b) {
-          if (a.verified !== b.verified) return a.verified ? -1 : 1;
-          return String(a.reg.RegisteredAt).localeCompare(String(b.reg.RegisteredAt));
-        });
-        var vCount = entries.filter(function(e) { return e.verified; }).length;
-        var pCount = entries.length - vCount;
-
-        var h = body.appendParagraph(c.Name || c.CompetitionID);
-        h.setAttributes(docStyle_({ bold: true, size: 12, color: "#000000", before: 14, after: 0, align: DocumentApp.HorizontalAlignment.LEFT }));
-        var sub = body.appendParagraph(
-          "ID: " + c.CompetitionID + "  \u2022  Status: " + String(c.Status || "").replace(/_/g, " ") +
-          "  \u2022  Verified: " + vCount + " / " + (c.MaxPlayers || "-") + "  \u2022  Awaiting verification: " + pCount
-        );
-        sub.setAttributes(docStyle_({ bold: false, size: 8, color: "#555555", before: 0, after: 4 }));
-
-        if (entries.length === 0) {
-          body.appendParagraph("No players registered yet.").setAttributes(docStyle_({ size: 9, italic: true, color: "#555555", after: 2 }));
-          continue;
-        }
-        var rows = [["#", "Player Name", "eFootball ID / Gamer Tag", "Status"]];
-        for (var e = 0; e < entries.length; e++) {
-          rows.push([
-            String(e + 1),
-            safeDisplayName_(entries[e].reg),
-            entries[e].reg.eFootballUsername || "-",
-            entries[e].verified ? "\u2714 Verified" : "\u23F3 Pending"
-          ]);
-        }
-        var tbl = body.appendTable(rows);
-        styleDocTable_(tbl, [32, 170, 158, 90], true);
-      }
-    }
-
-    renderDocFooter_(body);
-    finalizeDoc_(body);
-    var url = doc.getUrl();
-    doc.saveAndClose();
-    props.setProperty("LIVE_ROSTER_SIG", sig);
-    props.setProperty("LIVE_ROSTER_UPDATED_AT", new Date().toISOString());
-    Logger.log("[Roster Doc] Updated: " + url);
-    return { id: doc.getId(), url: url };
-  } finally {
-    releaseSyncMutex_("ROSTER_SYNC_RUNNING");
-  }
-}
-
-/* =========================================================================
- * QUEUED / SCHEDULED SYNC (keeps user-facing requests fast)
- * ========================================================================= */
-function queueDocsSync_(kind) {
-  var props = PropertiesService.getScriptProperties();
-  try {
-    if (kind === "rules") props.setProperty("SYNC_RULES_PENDING", "1");
-    else props.setProperty("SYNC_ROSTER_PENDING", "1");
-    if (props.getProperty("SYNC_TRIGGER_SET") === "1") return;
-    props.setProperty("SYNC_TRIGGER_SET", "1");
-    ScriptApp.newTrigger("runQueuedDocsSync").timeBased().after(30 * 1000).create();
-  } catch (err) {
-    Logger.log("[Queue] Trigger unavailable, syncing inline: " + err.message);
-    props.deleteProperty("SYNC_TRIGGER_SET");
-    try { runQueuedDocsSync(); } catch (e2) { Logger.log("[Queue] inline sync failed: " + e2.message); }
-  }
-}
-
-function removeTriggersByHandler_(names) {
-  var triggers = ScriptApp.getProjectTriggers();
-  for (var i = 0; i < triggers.length; i++) {
-    if (names.indexOf(triggers[i].getHandlerFunction()) !== -1) {
-      try { ScriptApp.deleteTrigger(triggers[i]); } catch (e) {}
-    }
-  }
-}
-
-function runQueuedDocsSync() {
-  var props = PropertiesService.getScriptProperties();
-  var doRules = props.getProperty("SYNC_RULES_PENDING") === "1";
-  var doRoster = props.getProperty("SYNC_ROSTER_PENDING") === "1";
-  props.deleteProperty("SYNC_RULES_PENDING");
-  props.deleteProperty("SYNC_ROSTER_PENDING");
-  props.deleteProperty("SYNC_TRIGGER_SET");
-  try { removeTriggersByHandler_(["runQueuedDocsSync"]); } catch (e) {}
-  var ss = getDatabaseSpreadsheet_();
-  if (doRules) { try { syncMasterRulesDocument_(ss); } catch (e1) { Logger.log("[Queued Rules Sync Error] " + e1.message); } }
-  if (doRoster) { try { syncLiveRosterDocument_(ss, false); } catch (e2) { Logger.log("[Queued Roster Sync Error] " + e2.message); } }
-}
-
-/** Recurring safety-net refresh (every 10 minutes, only rewrites if data changed). */
-function scheduledLiveRefresh() {
-  var ss = getDatabaseSpreadsheet_();
-  try { syncLiveRosterDocument_(ss, false); } catch (e) { Logger.log("[Scheduled Roster Error] " + e.message); }
-}
-
-/** Installable onEdit trigger: manual edits in Sheets refresh the Docs. */
-function onSheetEditSync(e) {
-  try {
-    var name = e && e.range ? e.range.getSheet().getName() : "";
-    if (name === MATCH_RULES_SHEET_NAME) queueDocsSync_("rules");
-    else if (name === REGISTRATIONS_SHEET_NAME || name === COMPETITIONS_SHEET_NAME) queueDocsSync_("roster");
-  } catch (err) { Logger.log("[onSheetEditSync] " + err.message); }
-}
-
-/**
- * RUN THIS ONCE from the Apps Script editor (authorize when prompted).
- * Creates the MatchRules + Invites sheets, builds both Google Docs immediately,
- * and installs the auto-refresh triggers.
- */
-function setupAutomation() {
-  var ss = getDatabaseSpreadsheet_();
-  getOrCreateMatchRulesSheet_(ss);
-  getOrCreateSheet_(ss, INVITES_SHEET_NAME, INVITES_HEADERS);
-  removeTriggersByHandler_(["scheduledLiveRefresh", "onSheetEditSync"]);
-  ScriptApp.newTrigger("scheduledLiveRefresh").timeBased().everyMinutes(10).create();
-  ScriptApp.newTrigger("onSheetEditSync").forSpreadsheet(ss).onEdit().create();
-  var rules = syncMasterRulesDocument_(ss);
-  var roster = syncLiveRosterDocument_(ss, true);
-  Logger.log("=== AUTOMATION READY ===");
-  Logger.log("Official Match Rules Doc : " + rules.url);
-  Logger.log("LIVE Registered Players  : " + (roster.url || docUrlFromProp_("LIVE_ROSTER_DOC_ID")));
-  return { rulesUrl: rules.url, rosterUrl: roster.url };
-}
-
-/* =========================================================================
- * PLAYER VERIFICATION (admin)
- * ========================================================================= */
-function playerProfileToAdminObject_(profile) {
-  return {
-    PlayerID: profile.user_id || profile.email,
-    GoogleUID: profile.user_id,
-    DisplayName: profile.display_name,
-    Email: profile.email,
-    PhotoURL: profile.photo_url,
-    ClassID: profile.class_id,
-    Phone: profile.phone,
-    WhatsAppNumber: profile.whatsapp,
-    Status: profile.status,
-    Verified: profile.status === "ACTIVE",
-    Role: profile.role,
-    CreatedAt: profile.created_at,
-    UpdatedAt: profile.updated_at,
-    SquadImageURL: profile.squad_image_url
-  };
-}
-
-function setPlayerStatusInDatabase_(ss, playerId, newStatus, adminEmail) {
-  var target = String(playerId || "").trim();
-  if (!target) return { success: false, message: "PlayerID is required." };
-  var sheet = getOrCreateUsersSheet_(ss);
-  var lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return { success: false, message: "No players found." };
-  var lastCol = sheet.getLastColumn();
-  var raw = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-  var headers = raw[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
-  var cols = getUsersColumnIndices_(headers);
-  if (cols.statusCol === -1) return { success: false, message: "Users sheet has no status column." };
-
-  for (var r = 1; r < raw.length; r++) {
-    var uid = cols.uidCol !== -1 ? String(raw[r][cols.uidCol] || "").trim() : "";
-    var email = cols.emailCol !== -1 ? String(raw[r][cols.emailCol] || "").trim() : "";
-    if (uid === target || (email && email.toLowerCase() === target.toLowerCase())) {
-      var rowNum = r + 1;
-      sheet.getRange(rowNum, cols.statusCol + 1).setValue(newStatus);
-      if (cols.updatedCol !== -1) sheet.getRange(rowNum, cols.updatedCol + 1).setValue(new Date().toISOString());
-      SpreadsheetApp.flush();
-      var fresh = sheet.getRange(rowNum, 1, 1, lastCol).getValues()[0];
-      var profile = buildUserProfileObject_(fresh, cols, uid, email);
-      logAudit_(ss, adminEmail, adminEmail, newStatus === "ACTIVE" ? "PLAYER_VERIFIED" : "PLAYER_SUSPENDED", "Player", uid || email, { status: newStatus });
-      var playerObj = playerProfileToAdminObject_(profile);
-      return {
-        success: true,
-        message: newStatus === "ACTIVE" ? "Player verified and activated." : "Player suspended.",
-        player: playerObj,
-        data: { player: playerObj }
-      };
-    }
-  }
-  return { success: false, message: "Player not found: " + target };
-}
-
-/* =========================================================================
- * INVITATIONS (Knockouts & Leagues)
- * ========================================================================= */
-function findCompetitionById_(ss, compId) {
-  var list = getCompetitionsFromDatabase_(ss);
-  for (var i = 0; i < list.length; i++) {
-    if (list[i].CompetitionID === compId) return list[i];
-  }
-  return null;
-}
-
-function sanitizeAppUrl_(u) {
-  u = String(u || "").trim();
-  if (!/^https?:\/\/[A-Za-z0-9.\-:_\/]+$/.test(u)) u = "";
-  if (!u) u = PropertiesService.getScriptProperties().getProperty("APP_URL") || "";
-  return u.replace(/\/+$/, "");
-}
-
-function maskEmail_(email) {
-  var e = String(email || "");
-  var at = e.indexOf("@");
-  if (at < 1) return "";
-  return e.charAt(0) + "***" + e.substring(at);
-}
-
-function inviteRowToObject_(headers, row) {
-  var o = {};
-  for (var c = 0; c < headers.length; c++) o[headers[c]] = row[c];
-  var expires = o.expires_at ? new Date(o.expires_at) : null;
-  var uses = Number(o.uses || 0);
-  var maxUses = Number(o.max_uses || 0);
-  var state = String(o.status || "ACTIVE").toUpperCase();
-  if (state !== "REVOKED") {
-    if (expires && !isNaN(expires.getTime()) && expires.getTime() < Date.now()) state = "EXPIRED";
-    else if (maxUses > 0 && uses >= maxUses) state = "USED";
-    else state = "ACTIVE";
-  }
-  return {
-    InviteID: String(o.invite_id || ""),
-    Code: String(o.code || ""),
-    CompetitionID: String(o.competition_id || ""),
-    CompetitionName: String(o.competition_name || ""),
-    CompetitionType: String(o.competition_type || ""),
-    InviteType: String(o.invite_type || "LINK"),
-    InvitedEmail: String(o.invited_email || ""),
-    InvitedByUID: String(o.invited_by_uid || ""),
-    InvitedByName: String(o.invited_by_name || ""),
-    State: state,
-    Uses: uses,
-    MaxUses: maxUses,
-    CreatedAt: String(o.created_at || ""),
-    ExpiresAt: String(o.expires_at || ""),
-    LastUsedAt: String(o.last_used_at || ""),
-    AcceptedBy: String(o.accepted_by || "")
-  };
-}
-
-function readInvites_(ss) {
-  var sheet = getOrCreateSheet_(ss, INVITES_SHEET_NAME, INVITES_HEADERS);
-  var lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return { sheet: sheet, headers: [], rows: [] };
-  var raw = sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).getValues();
-  var headers = raw[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
-  var rows = [];
-  for (var r = 1; r < raw.length; r++) {
-    rows.push({ rowNum: r + 1, raw: raw[r], obj: inviteRowToObject_(headers, raw[r]) });
-  }
-  return { sheet: sheet, headers: headers, rows: rows };
-}
-
-function findInviteByCode_(ss, code) {
-  var wanted = String(code || "").trim().toUpperCase();
-  if (!wanted) return null;
-  var data = readInvites_(ss);
-  for (var i = 0; i < data.rows.length; i++) {
-    if (String(data.rows[i].obj.Code).toUpperCase() === wanted) {
-      return { sheet: data.sheet, headers: data.headers, entry: data.rows[i] };
-    }
-  }
-  return null;
-}
-
-function sendInviteEmail_(toEmail, inviterName, comp, link) {
-  try {
-    var kind = String(comp.CompetitionType).toUpperCase() === "LEAGUE" ? "League" : "Knockout Tournament";
-    var fee = comp.EntryFee !== undefined ? "KSh " + comp.EntryFee : "";
-    var prize = comp.PrizeAmount ? "KSh " + Number(comp.PrizeAmount).toLocaleString() : "";
-    var html =
-      '<div style="font-family:Georgia,serif;max-width:520px;margin:auto;border:1px solid #ccc;padding:24px">' +
-      '<h2 style="margin:0 0 4px;text-align:center;letter-spacing:1px">CHUKA eFOOTBALL</h2>' +
-      '<p style="margin:0 0 16px;text-align:center;font-size:11px;color:#555;text-transform:uppercase">Official University eFootball Esports Hub</p>' +
-      '<hr style="border:none;border-top:2px solid #222">' +
-      '<p>' + (inviterName ? inviterName : "The tournament directorate") + ' has invited you to join the <b>' + kind + ': ' + comp.Name + '</b>.</p>' +
-      (fee || prize ? '<p style="font-size:13px;color:#333">' + (fee ? "Entry fee: <b>" + fee + "</b>" : "") + (fee && prize ? " &nbsp;|&nbsp; " : "") + (prize ? "Winner prize: <b>" + prize + "</b>" : "") + '</p>' : "") +
-      '<p style="text-align:center;margin:24px 0"><a href="' + link + '" style="background:#22c55e;color:#000;padding:12px 22px;text-decoration:none;font-weight:bold;border-radius:8px">Accept Invitation</a></p>' +
-      '<p style="font-size:11px;color:#666">Sign in with this email address (' + toEmail + ') to accept. Registration is confirmed after an administrator verifies your payment.</p>' +
-      '<p style="font-size:11px;color:#666">Help Desk: ' + HELP_DESK_NAME + ' (' + HELP_DESK_PHONE + ')</p></div>';
-    MailApp.sendEmail({
-      to: toEmail,
-      subject: "You're invited: " + comp.Name + " - Chuka eFootball",
-      htmlBody: html,
-      name: "Chuka eFootball Hub"
-    });
-    return true;
-  } catch (err) {
-    Logger.log("[Invite Email Error] " + err.message);
-    return false;
-  }
-}
-
-function createInviteInDatabase_(ss, auth, body) {
-  var isAdm = isAdminAuth_(auth);
-  var compId = String(body.competitionId || body.CompetitionID || "").trim();
-  var comp = findCompetitionById_(ss, compId);
-  if (!comp) return { success: false, message: "Competition not found." };
-  var cStatus = String(comp.Status || "").toUpperCase();
-  if (!isAdm && cStatus !== "OPEN") {
-    return { success: false, message: "Only competitions with open registration can be shared." };
-  }
-  if (isAdm && (cStatus === "COMPLETED" || cStatus === "CANCELLED")) {
-    return { success: false, message: "This competition has ended and cannot accept invitations." };
-  }
-
-  var email = String(body.email || "").trim().toLowerCase();
-  if (email) {
-    if (!isAdm) return { success: false, message: "Only administrators can send email invitations." };
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { success: false, message: "Invalid email address." };
-  }
-
-  var data = readInvites_(ss);
-  if (!isAdm) {
-    var mine = 0;
-    for (var i = 0; i < data.rows.length; i++) {
-      if (data.rows[i].obj.InvitedByUID === auth.uid && data.rows[i].obj.State === "ACTIVE") mine++;
-    }
-    if (mine >= 25) return { success: false, message: "You have reached the limit of 25 active invitations. Revoke some first." };
-  }
-
-  var code = "";
-  for (var tries = 0; tries < 10; tries++) {
-    code = Utilities.getUuid().replace(/-/g, "").substring(0, 8).toUpperCase();
-    var clash = false;
-    for (var k = 0; k < data.rows.length; k++) { if (data.rows[k].obj.Code === code) { clash = true; break; } }
-    if (!clash) break;
-  }
-
-  var expiryDays = Math.max(1, Math.min(90, Number(body.expiryDays) || 14));
-  var maxUses = email ? 1 : (isAdm ? Math.max(0, Number(body.maxUses) || 0) : 0);
-  var now = new Date();
-  var expires = new Date(now.getTime() + expiryDays * 24 * 60 * 60 * 1000);
-  var inviteId = "INV-" + Date.now().toString().slice(-8);
-
-  data.sheet.appendRow([
-    inviteId, code, comp.CompetitionID, comp.Name, String(comp.CompetitionType || ""),
-    email ? "EMAIL" : "LINK", email, auth.uid, auth.displayName || auth.email || "", "ACTIVE",
-    0, maxUses, now.toISOString(), expires.toISOString(), "", ""
-  ]);
-  SpreadsheetApp.flush();
-
-  var appUrl = sanitizeAppUrl_(body.appUrl);
-  if (appUrl && !PropertiesService.getScriptProperties().getProperty("APP_URL")) {
-    PropertiesService.getScriptProperties().setProperty("APP_URL", appUrl);
-  }
-  var link = appUrl ? appUrl + "/?invite=" + code : "";
-  var emailSent = false;
-  if (email && link) emailSent = sendInviteEmail_(email, auth.displayName || "", comp, link);
-
-  logAudit_(ss, auth.uid, auth.email, "INVITE_CREATED", "Invite", inviteId, { competitionId: comp.CompetitionID, type: email ? "EMAIL" : "LINK", emailSent: emailSent });
-
-  var obj = inviteRowToObject_(INVITES_HEADERS, [
-    inviteId, code, comp.CompetitionID, comp.Name, String(comp.CompetitionType || ""),
-    email ? "EMAIL" : "LINK", email, auth.uid, auth.displayName || auth.email || "", "ACTIVE",
-    0, maxUses, now.toISOString(), expires.toISOString(), "", ""
-  ]);
-  return {
-    success: true,
-    message: email ? (emailSent ? "Invitation emailed to " + email + "." : "Invitation created. Email could not be sent - share the link manually.") : "Invite link created.",
-    invite: obj,
-    link: link,
-    emailSent: emailSent,
-    data: { invite: obj, link: link, emailSent: emailSent, message: email ? (emailSent ? "Invitation emailed to " + email + "." : "Invitation created. Email could not be sent - share the link manually.") : "Invite link created." }
-  };
-}
-
-function previewInvite_(ss, code) {
-  var found = findInviteByCode_(ss, code);
-  if (!found) return { success: true, valid: false, reason: "This invitation link is not valid.", data: { valid: false, reason: "This invitation link is not valid." } };
-  var inv = found.entry.obj;
-  var comp = findCompetitionById_(ss, inv.CompetitionID);
-  var reason = "";
-  if (inv.State === "REVOKED") reason = "This invitation has been withdrawn.";
-  else if (inv.State === "EXPIRED") reason = "This invitation has expired.";
-  else if (inv.State === "USED") reason = "This invitation has already been used.";
-  else if (!comp) reason = "The competition for this invitation no longer exists.";
-  else if (String(comp.Status).toUpperCase() !== "OPEN") reason = "Registration for this competition is not open.";
-  var out = {
-    valid: reason === "",
-    reason: reason,
-    code: inv.Code,
-    competitionId: inv.CompetitionID,
-    competitionName: inv.CompetitionName,
-    competitionType: inv.CompetitionType,
-    entryFee: comp ? comp.EntryFee : undefined,
-    prizeAmount: comp ? comp.PrizeAmount : undefined,
-    invitedBy: String(inv.InvitedByName || "").split(" ")[0],
-    restrictedTo: inv.InvitedEmail ? maskEmail_(inv.InvitedEmail) : ""
-  };
-  return { success: true, valid: out.valid, reason: out.reason, invite: out, data: out };
-}
-
-function acceptInviteInDatabase_(ss, auth, code) {
-  var lock = LockService.getScriptLock();
-  try { lock.waitLock(10000); } catch (e) { return { success: false, message: "System is busy. Please try again." }; }
-  try {
-    var found = findInviteByCode_(ss, code);
-    if (!found) return { success: false, message: "This invitation link is not valid." };
-    var inv = found.entry.obj;
-    if (inv.State !== "ACTIVE") {
-      var msg = inv.State === "REVOKED" ? "This invitation has been withdrawn." : inv.State === "EXPIRED" ? "This invitation has expired." : "This invitation has already been used.";
-      return { success: false, message: msg };
-    }
-    if (inv.InvitedEmail && String(auth.email || "").toLowerCase() !== inv.InvitedEmail.toLowerCase()) {
-      return { success: false, message: "This invitation was sent to " + maskEmail_(inv.InvitedEmail) + ". Please sign in with that email address." };
-    }
-    var comp = findCompetitionById_(ss, inv.CompetitionID);
-    if (!comp) return { success: false, message: "The competition for this invitation no longer exists." };
-    if (String(comp.Status).toUpperCase() !== "OPEN") return { success: false, message: "Registration for this competition is not open." };
-
-    var acceptedBy = inv.AcceptedBy ? inv.AcceptedBy.split(",") : [];
-    var me = String(auth.uid || auth.email);
-    var firstTime = acceptedBy.indexOf(me) === -1;
-    if (firstTime) {
-      acceptedBy.push(me);
-      var h = found.headers;
-      var row = found.entry.rowNum;
-      found.sheet.getRange(row, h.indexOf("uses") + 1).setValue(inv.Uses + 1);
-      found.sheet.getRange(row, h.indexOf("accepted_by") + 1).setValue(acceptedBy.join(","));
-      found.sheet.getRange(row, h.indexOf("last_used_at") + 1).setValue(new Date().toISOString());
-      SpreadsheetApp.flush();
-      logAudit_(ss, auth.uid, auth.email, "INVITE_ACCEPTED", "Invite", inv.InviteID, { competitionId: comp.CompetitionID });
-    }
-
-    var regs = getRegistrationsFromDatabase_(ss, comp.CompetitionID);
-    var already = false;
-    for (var i = 0; i < regs.length; i++) {
-      var st = String(regs[i].Status).toUpperCase();
-      if ((regs[i].PlayerID === auth.uid || regs[i].PlayerID === auth.email) && st !== "REJECTED" && st !== "CANCELLED") { already = true; break; }
-    }
-    return {
-      success: true,
-      message: already ? "You are already registered for " + comp.Name + "." : "Invitation accepted. Complete your registration for " + comp.Name + ".",
-      competition: comp,
-      alreadyRegistered: already,
-      data: { competition: comp, alreadyRegistered: already, message: already ? "You are already registered for " + comp.Name + "." : "Invitation accepted. Complete your registration for " + comp.Name + "." }
-    };
-  } finally {
-    try { lock.releaseLock(); } catch (e) {}
-  }
-}
-
-function listInvitesFromDatabase_(ss, auth, compId) {
-  var data = readInvites_(ss);
-  var isAdm = isAdminAuth_(auth);
-  var out = [];
-  for (var i = data.rows.length - 1; i >= 0; i--) {
-    var o = data.rows[i].obj;
-    if (!isAdm && o.InvitedByUID !== auth.uid) continue;
-    if (compId && o.CompetitionID !== compId) continue;
-    out.push(o);
-    if (out.length >= 300) break;
-  }
-  return out;
-}
-
-function revokeInviteInDatabase_(ss, auth, inviteId) {
-  var data = readInvites_(ss);
-  var isAdm = isAdminAuth_(auth);
-  for (var i = 0; i < data.rows.length; i++) {
-    var o = data.rows[i].obj;
-    if (o.InviteID === String(inviteId || "").trim()) {
-      if (!isAdm && o.InvitedByUID !== auth.uid) return { success: false, message: "You can only revoke your own invitations." };
-      data.sheet.getRange(data.rows[i].rowNum, data.headers.indexOf("status") + 1).setValue("REVOKED");
-      SpreadsheetApp.flush();
-      logAudit_(ss, auth.uid, auth.email, "INVITE_REVOKED", "Invite", o.InviteID, { competitionId: o.CompetitionID });
-      return { success: true, message: "Invitation revoked." };
-    }
-  }
-  return { success: false, message: "Invitation not found." };
 }

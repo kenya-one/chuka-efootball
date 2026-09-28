@@ -347,7 +347,6 @@ export interface CompetitionRegistration {
   RegistrationID: string;
   CompetitionID: string;
   PlayerID: string;
-  PlayerName?: string;
   GoogleUID: string;
   eFootballUsername: string;
   Status: RegistrationStatus | string;
@@ -694,47 +693,3 @@ export interface MediaFileRecord {
 }
 
 
-
-/* ==========================================================================
-   INVITES & LIVE GOOGLE DOCS
-   ========================================================================== */
-export type InviteState = 'ACTIVE' | 'USED' | 'EXPIRED' | 'REVOKED';
-
-export interface InviteRecord {
-  InviteID: string;
-  Code: string;
-  CompetitionID: string;
-  CompetitionName: string;
-  CompetitionType: string;
-  InviteType: 'LINK' | 'EMAIL' | string;
-  InvitedEmail: string;
-  InvitedByUID: string;
-  InvitedByName: string;
-  State: InviteState | string;
-  Uses: number;
-  MaxUses: number;
-  CreatedAt: string;
-  ExpiresAt: string;
-  LastUsedAt: string;
-  AcceptedBy: string;
-}
-
-export interface InvitePreview {
-  valid: boolean;
-  reason: string;
-  code?: string;
-  competitionId?: string;
-  competitionName?: string;
-  competitionType?: string;
-  entryFee?: number;
-  prizeAmount?: number;
-  invitedBy?: string;
-  restrictedTo?: string;
-}
-
-export interface LiveDocsInfo {
-  rulesUrl: string;
-  rosterUrl: string;
-  rulesUpdatedAt: string;
-  rosterUpdatedAt: string;
-}

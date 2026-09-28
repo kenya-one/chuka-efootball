@@ -26,7 +26,6 @@ import { useAdmin } from '../auth/AdminProvider';
 import { usePlayer } from '../auth/PlayerProvider';
 import { AdminRoute } from '../auth/AdminRoute';
 import { MatchRulesModal } from '../components/rules/MatchRulesModal';
-import { InviteLandingModal } from '../components/invites/InviteLandingModal';
 
 export type DashboardTab =
   | 'competitions'
@@ -411,12 +410,6 @@ export const DashboardPage: React.FC = () => {
           </AdminRoute>
         )}
       </main>
-
-      <InviteLandingModal
-        player={player}
-        onNavigateToProfile={() => setActiveTab('profile')}
-        onRegistered={() => setActiveTab('my-competitions')}
-      />
 
       <MatchRulesModal
         isOpen={showRulesModal}

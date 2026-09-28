@@ -53,9 +53,8 @@ export const AdminRegistrationsView: React.FC = () => {
 
   const handleApprove = async (regId: string) => {
     try {
-      setError(null);
       await TournamentAdminService.confirmRegistration(regId);
-      setSuccessMsg(`Player verified — registration ${regId} approved, payment confirmed and the live roster document is refreshing.`);
+      setSuccessMsg(`Registration ${regId} has been approved.`);
       await loadData();
     } catch (err: any) {
       setError(err?.message || 'Failed to approve registration.');
@@ -65,7 +64,6 @@ export const AdminRegistrationsView: React.FC = () => {
   const handleReject = async (regId: string) => {
     if (!window.confirm(`Are you sure you want to reject registration ${regId}?`)) return;
     try {
-      setError(null);
       await TournamentAdminService.rejectRegistration(regId);
       setSuccessMsg(`Registration ${regId} marked as rejected.`);
       await loadData();
@@ -81,7 +79,7 @@ export const AdminRegistrationsView: React.FC = () => {
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      const target = `${r.RegistrationID} ${r.PlayerName || ''} ${r.PlayerID} ${r.eFootballUsername} ${r.CompetitionName || ''} ${r.PaymentID || ''}`.toLowerCase();
+      const target = `${r.RegistrationID} ${r.PlayerID} ${r.eFootballUsername} ${r.CompetitionName || ''} ${r.PaymentID || ''}`.toLowerCase();
       if (!target.includes(q)) return false;
     }
     return true;
@@ -239,9 +237,8 @@ export const AdminRegistrationsView: React.FC = () => {
                     </td>
 
                     <td className="py-3 px-4">
-                      <div className="font-bold text-white text-sm">{r.PlayerName || r.eFootballUsername}</div>
-                      <div className="text-[11px] text-emerald-300 font-mono">{r.eFootballUsername}</div>
-                      <div className="text-[11px] text-gray-500 font-mono">ID: {r.PlayerID}</div>
+                      <div className="font-bold text-white text-sm font-mono">{r.eFootballUsername}</div>
+                      <div className="text-[11px] text-gray-400 font-mono">ID: {r.PlayerID}</div>
                     </td>
 
                     <td className="py-3 px-4">

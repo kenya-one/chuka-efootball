@@ -27,10 +27,13 @@ export const getShareBaseUrl = (): string => {
   return `${window.location.origin}${base}`;
 };
 
-export const getCompetitionShareUrl = (comp?: Pick<Competition, 'CompetitionType'> | null): string => {
+export const getCompetitionShareUrl = (comp?: Pick<Competition, 'CompetitionType' | 'CompetitionID'> | null, referralCode?: string): string => {
   const type = String(comp?.CompetitionType || '').toUpperCase();
   const hash = type === 'LEAGUE' ? '#league' : type === 'KNOCKOUT' ? '#knockout' : '#competitions';
-  return `${getShareBaseUrl()}${hash}`;
+  const params = new URLSearchParams();
+  if (comp?.CompetitionID) params.set('tournamentId', comp.CompetitionID);
+  if (referralCode) params.set('ref', referralCode);
+  return `${getShareBaseUrl()}${hash}${params.toString() ? `?${params.toString()}` : ''}`;
 };
 
 export const getCompetitionShareText = (comp: Competition, verifiedCount?: number): string => {

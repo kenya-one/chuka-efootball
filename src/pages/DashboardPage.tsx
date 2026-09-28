@@ -9,6 +9,7 @@ import {
   Sparkles,
   BookOpen,
   MessageCircle,
+  Gift as GiftIcon,
 } from 'lucide-react';
 import { KonamiLogo } from '../components/common/KonamiLogo';
 import { EFootballLogo } from '../components/common/EFootballLogo';
@@ -26,6 +27,8 @@ import { useAdmin } from '../auth/AdminProvider';
 import { usePlayer } from '../auth/PlayerProvider';
 import { AdminRoute } from '../auth/AdminRoute';
 import { MatchRulesModal } from '../components/rules/MatchRulesModal';
+import { CommunityGrowthView } from '../components/community/CommunityGrowthView';
+import { PlatformMediaBanner } from '../components/community/PlatformMediaBanner';
 
 export type DashboardTab =
   | 'competitions'
@@ -34,6 +37,7 @@ export type DashboardTab =
   | 'my-competitions'
   | 'profile'
   | 'whatsapp'
+  | 'growth'
   | 'admin-competitions'
   | 'admin';
 
@@ -61,9 +65,9 @@ export const DashboardPage: React.FC = () => {
         setActiveTab('admin-competitions');
       } else if (path.includes('/admin/players') || path.includes('/admin') || hash === '#admin') {
         setActiveTab('admin');
-      } else if (path.includes('/cup') || path.includes('/knockout') || hash === '#cup' || hash === '#knockout') {
+      } else if (path.includes('/cup') || path.includes('/knockout') || hash === '#cup' || hash === '#knockout' || hash.startsWith('#knockout?')) {
         setActiveTab('knockout');
-      } else if (path.includes('/league') || hash === '#league') {
+      } else if (path.includes('/league') || hash === '#league' || hash.startsWith('#league?')) {
         setActiveTab('league');
       } else if (path.includes('/entries') || hash === '#my-competitions') {
         setActiveTab('my-competitions');
@@ -253,6 +257,8 @@ export const DashboardPage: React.FC = () => {
             <span>My Entries</span>
           </button>
 
+          <button id="tab-growth-btn" type="button" onClick={() => setActiveTab('growth')} className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'growth' ? 'bg-[#22c55e] text-black shadow-lg' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}><GiftIcon/><span>Invite & Grow</span></button>
+
           {/* Player Profile */}
           <button
             id="tab-profile-btn"
@@ -316,6 +322,7 @@ export const DashboardPage: React.FC = () => {
 
       {/* Main Content Area */}
       <main className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+        <PlatformMediaBanner />
         {/* TAB 1: COMPETITIONS LIST */}
         {activeTab === 'competitions' && (
           <div className="space-y-6 animate-in fade-in duration-200">
@@ -346,6 +353,12 @@ export const DashboardPage: React.FC = () => {
             <MyRegistrationsView
               onBrowseCompetitions={() => setActiveTab('competitions')}
             />
+          </div>
+        )}
+
+        {activeTab === 'growth' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <CommunityGrowthView />
           </div>
         )}
 

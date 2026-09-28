@@ -114,6 +114,15 @@ export const KnockoutView: React.FC<KnockoutViewProps> = ({
     loadCupData();
   }, [currentPlayer]);
 
+  useEffect(() => {
+    const hash = typeof window !== 'undefined' ? window.location.hash : '';
+    if (hash.startsWith('#knockout?')) {
+      const q = new URLSearchParams(hash.slice('#knockout?'.length));
+      const id = q.get('tournamentId');
+      if (id) setSelectedId(id);
+    }
+  }, []);
+
   // Newest / most active tournaments first
   const orderedTournaments = [...tournaments].sort((a, b) => {
     const rank = (c: Competition) => (c.Status === 'OPEN' ? 0 : c.Status === 'IN_PROGRESS' ? 1 : c.Status === 'FULL' ? 2 : 3);

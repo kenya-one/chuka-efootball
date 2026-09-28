@@ -204,6 +204,17 @@ var AUDIT_LOGS_HEADERS = [
 ];
 
 var DISPUTES_SHEET_NAME = "Disputes";
+var REFERRALS_SHEET_NAME = "Referrals";
+var REFERRALS_HEADERS = ["referral_id","referrer_uid","referral_code","referred_uid","competition_id","status","created_at","qualified_at"];
+var REWARD_CLAIMS_SHEET_NAME = "RewardClaims";
+var REWARD_CLAIMS_HEADERS = ["claim_id","player_id","reward_type","units","created_at"];
+var MANAGED_LEAGUES_SHEET_NAME = "ManagedLeagues";
+var MANAGED_LEAGUES_HEADERS = ["competition_id","manager_uid","share_code","match_window","created_at"];
+var ADVERTISEMENTS_SHEET_NAME = "Advertisements";
+var ADVERTISEMENTS_HEADERS = ["ad_id","business_name","category","description","phone","whatsapp","location","image_url","website_url","package_name","amount","currency","payment_reference","status","start_at","end_at","created_at"];
+var PLATFORM_SETTINGS_SHEET_NAME = "PlatformSettings";
+var PLATFORM_SETTINGS_HEADERS = ["setting_key","setting_value","updated_at"];
+
 var DISPUTES_HEADERS = [
   "dispute_id",
   "fixture_id",
@@ -1090,6 +1101,62 @@ function doPost(e) {
       });
     }
 
+    // COMMUNITY GROWTH / SELF-SERVICE LEAGUES / ADVERTISEMENTS
+    if (action === "GET_REFERRAL_DASHBOARD") {
+      var rdAuth = verifyFirebaseIdToken_(body.idToken || "");
+      if (!rdAuth || !rdAuth.valid) return createJsonResponse_({ success:false, message:"Authentication required." });
+      return createJsonResponse_({ success:true, dashboard:getReferralDashboard_(getDatabaseSpreadsheet_(), rdAuth) });
+    }
+    if (action === "CLAIM_REFERRAL_TICKET") {
+      var ctAuth = verifyFirebaseIdToken_(body.idToken || "");
+      if (!ctAuth || !ctAuth.valid) return createJsonResponse_({ success:false, message:"Authentication required." });
+      var ctRes = claimReferralTicket_(getDatabaseSpreadsheet_(), ctAuth);
+      return createJsonResponse_(ctRes);
+    }
+    if (action === "CREATE_MANAGED_LEAGUE") {
+      var mlAuth = verifyFirebaseIdToken_(body.idToken || "");
+      if (!mlAuth || !mlAuth.valid) return createJsonResponse_({ success:false, message:"Authentication required." });
+      var mlSs = getDatabaseSpreadsheet_();
+      var ml = createManagedLeagueInDatabase_(mlSs, mlAuth, body);
+      return createJsonResponse_(ml);
+    }
+    if (action === "GET_MY_MANAGED_LEAGUES") {
+      var glAuth = verifyFirebaseIdToken_(body.idToken || "");
+      if (!glAuth || !glAuth.valid) return createJsonResponse_({ success:false, message:"Authentication required." });
+      return createJsonResponse_({ success:true, leagues:getManagedLeagues_(getDatabaseSpreadsheet_(), glAuth.uid) });
+    }
+    if (action === "GENERATE_MANAGED_LEAGUE_FIXTURES") {
+      var gfAuth = verifyFirebaseIdToken_(body.idToken || "");
+      if (!gfAuth || !gfAuth.valid) return createJsonResponse_({ success:false, message:"Authentication required." });
+      var gfSs = getDatabaseSpreadsheet_();
+      if (!isManagedLeagueOwner_(gfSs, body.competitionId, gfAuth.uid) && !gfAuth.isAdmin) return createJsonResponse_({ success:false, message:"Only the league manager can generate fixtures." });
+      return createJsonResponse_(generateLeagueFixturesInDatabase_(gfSs, body.competitionId, gfAuth.email));
+    }
+    if (action === "SUBMIT_ADVERTISEMENT") {
+      var adAuth = verifyFirebaseIdToken_(body.idToken || "");
+      if (!adAuth || !adAuth.valid) return createJsonResponse_({ success:false, message:"Authentication required." });
+      return createJsonResponse_(submitAdvertisementInDatabase_(getDatabaseSpreadsheet_(), adAuth, body));
+    }
+    if (action === "GET_ACTIVE_ADVERTISEMENTS") {
+      return createJsonResponse_({ success:true, ads:getActiveAdvertisements_(getDatabaseSpreadsheet_()) });
+    }
+    if (action === "GET_ADMIN_ADVERTISEMENTS") {
+      var aaAuth=verifyFirebaseIdToken_(body.idToken||""); if(!aaAuth||!aaAuth.valid||!aaAuth.isAdmin) return createJsonResponse_({success:false,message:"Administrator privileges required."});
+      return createJsonResponse_({success:true,ads:getAllAdvertisements_(getDatabaseSpreadsheet_())});
+    }
+    if (action === "UPDATE_ADVERTISEMENT_STATUS") {
+      var uaAuth=verifyFirebaseIdToken_(body.idToken||""); if(!uaAuth||!uaAuth.valid||!uaAuth.isAdmin) return createJsonResponse_({success:false,message:"Administrator privileges required."});
+      return createJsonResponse_(updateAdvertisementStatus_(getDatabaseSpreadsheet_(),body.adId,body.status,body.startAt,body.endAt,uaAuth.email));
+    }
+    if (action === "GET_PLATFORM_SETTINGS") {
+      return createJsonResponse_({ success:true, settings:getPlatformSettings_(getDatabaseSpreadsheet_()) });
+    }
+    if (action === "SET_PLATFORM_SETTING") {
+      var psAuth = verifyFirebaseIdToken_(body.idToken || "");
+      if (!psAuth || !psAuth.valid || !psAuth.isAdmin) return createJsonResponse_({ success:false, message:"Administrator privileges required." });
+      return createJsonResponse_(setPlatformSetting_(getDatabaseSpreadsheet_(), body.key, body.value));
+    }
+
     // 8. Action: createCompetition (and aliases)
     if (action === "createCompetition" || action === "create-competition" || action === "admin-competition-create") {
       var ccIdToken = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
@@ -1213,7 +1280,7 @@ function doPost(e) {
       }
       var rcSs = getDatabaseSpreadsheet_();
       var regCompId = body.competitionId || body.CompetitionID;
-      var regResult = registerPlayerInDatabase_(rcSs, rcAuth, regCompId, body.efootballUsername, body.paymentRef);
+      var regResult = registerPlayerInDatabase_(rcSs, rcAuth, regCompId, body.efootballUsername, body.paymentRef, body.referralCode, body.useFreeTicket === true);
       return createJsonResponse_(regResult);
     }
 
@@ -3358,7 +3425,7 @@ function getRegistrationsFromDatabase_(spreadsheet, compId) {
 /**
  * Registers a player for a competition in Registrations sheet with atomic capacity check and duplicate check.
  */
-function registerPlayerInDatabase_(spreadsheet, authUser, compId, efootballUsername, paymentRef) {
+function registerPlayerInDatabase_(spreadsheet, authUser, compId, efootballUsername, paymentRef, referralCode, useFreeTicket) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(15000);
@@ -3441,6 +3508,17 @@ function registerPlayerInDatabase_(spreadsheet, authUser, compId, efootballUsern
     var compFee = isKnockout ? 20 : 50;
     var compName = targetComp.Name || compId;
 
+    // Referral + free-ticket entitlement. Referral is credited only after an eligible registration is approved.
+    var referral = findReferralCodeOwner_(spreadsheet, String(referralCode || "").trim());
+    if (referral && referral.referrerUid === uid) referral = null;
+    if (referral && referral.alreadyReferred) referral = null;
+    var freeTicketUsed = false;
+    if (isKnockout && useFreeTicket === true) {
+      freeTicketUsed = consumeAvailableReferralTicket_(spreadsheet, uid);
+    }
+    var referralFreeRegistration = !!referral;
+    var paymentStatusForRegistration = (freeTicketUsed || referralFreeRegistration) ? "NOT_REQUIRED" : "PENDING";
+
     // Append Pending Registration
     regSheet.appendRow([
       regId,
@@ -3449,7 +3527,7 @@ function registerPlayerInDatabase_(spreadsheet, authUser, compId, efootballUsern
       authUser.displayName || email,
       username,
       "PENDING",
-      "PENDING",
+      paymentStatusForRegistration,
       payId,
       nowIso,
       "",
@@ -3465,14 +3543,18 @@ function registerPlayerInDatabase_(spreadsheet, authUser, compId, efootballUsern
       compId,
       compName,
       compType,
-      compFee,
+      (freeTicketUsed || referralFreeRegistration) ? 0 : compFee,
       "KES",
-      paymentRef || "PENDING",
-      "PENDING",
+      freeTicketUsed ? "REFERRAL_TICKET" : (referralFreeRegistration ? "REFERRAL_FREE" : (paymentRef || "PENDING")),
+      (freeTicketUsed || referralFreeRegistration) ? "CONFIRMED" : "PENDING",
       nowIso,
       "",
       ""
     ]);
+
+    if (referral) {
+      recordReferral_(spreadsheet, referral.referrerUid, referral.code, uid, compId);
+    }
 
     SpreadsheetApp.flush();
     logAudit_(spreadsheet, uid, email, "REGISTRATION_SUBMITTED", "Registration", regId, { competitionId: compId, paymentId: payId, amount: compFee, till: "6817863" });
@@ -3523,7 +3605,7 @@ function updateRegistrationStatusInDatabase_(spreadsheet, regId, status, verifie
       var curPayStatus = payStatusCol !== -1 ? String(rawValues[r][payStatusCol] || "").trim().toUpperCase() : "PENDING";
       var associatedPayId = payIdCol !== -1 ? String(rawValues[r][payIdCol] || "").trim() : "";
 
-      if (status === "APPROVED" && curPayStatus !== "CONFIRMED" && curPayStatus !== "PAID") {
+      if (status === "APPROVED" && curPayStatus !== "CONFIRMED" && curPayStatus !== "PAID" && curPayStatus !== "NOT_REQUIRED") {
         return {
           success: false,
           message: "Cannot approve registration: Associated payment is not confirmed. Approvals must be processed by confirming payment via the Payments tab."
@@ -3536,6 +3618,22 @@ function updateRegistrationStatusInDatabase_(spreadsheet, regId, status, verifie
       }
       if (vAtCol !== -1) sheet.getRange(rowNum, vAtCol + 1).setValue(new Date().toISOString());
       if (vByCol !== -1) sheet.getRange(rowNum, vByCol + 1).setValue(verifiedBy);
+      if (status === "APPROVED") {
+        qualifyReferralForRegistration_(spreadsheet, regId);
+        try {
+          var approvedRegs = getRegistrationsFromDatabase_(spreadsheet, "");
+          var targetCompId = "";
+          for (var ari=0; ari<approvedRegs.length; ari++) { if (approvedRegs[ari].RegistrationID === regId) { targetCompId = approvedRegs[ari].CompetitionID; break; } }
+          var compsForAuto = getCompetitionsFromDatabase_(spreadsheet);
+          for (var aci=0; aci<compsForAuto.length; aci++) {
+            var ac = compsForAuto[aci];
+            if (ac.CompetitionID === targetCompId && String(ac.CompetitionType).toUpperCase() === "KNOCKOUT" && Number(ac.ApprovedCount || 0) >= Number(ac.MinPlayers || 1024) && !String(ac.BracketStatus || "").toUpperCase().includes("GENERATED")) {
+              generateKnockoutBracketInDatabase_(spreadsheet, targetCompId, verifiedBy);
+              break;
+            }
+          }
+        } catch (autoBracketErr) { Logger.log("[Auto Bracket] " + autoBracketErr.message); }
+      }
       SpreadsheetApp.flush();
 
       logAudit_(spreadsheet, verifiedBy, verifiedBy, "REGISTRATION_STATUS_UPDATED", "Registration", regId, { status: status, paymentId: associatedPayId });
@@ -4960,6 +5058,9 @@ function confirmMatchResultInDatabase_(spreadsheet, authUser, fixtureId) {
   var rawFix = fixSheet.getRange(1, 1, lastRow, lastCol).getValues();
   var headers = rawFix[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
   var fIdCol = headers.indexOf("fixture_id");
+  var cIdCol = headers.indexOf("competition_id");
+  var roundCol = headers.indexOf("round");
+  var cTypeCol = headers.indexOf("competition_type");
   var p1Col = headers.indexOf("player1_id");
   var p2Col = headers.indexOf("player2_id");
   var statCol = headers.indexOf("status");
@@ -4980,6 +5081,13 @@ function confirmMatchResultInDatabase_(spreadsheet, authUser, fixtureId) {
       if (statCol !== -1) fixSheet.getRange(rowNum, statCol + 1).setValue("COMPLETED");
       if (upCol !== -1) fixSheet.getRange(rowNum, upCol + 1).setValue(new Date().toISOString());
       SpreadsheetApp.flush();
+
+      var confirmedType = cTypeCol !== -1 ? String(rawFix[r][cTypeCol] || "").toUpperCase() : "";
+      var confirmedComp = cIdCol !== -1 ? String(rawFix[r][cIdCol] || "") : "";
+      var confirmedRound = roundCol !== -1 ? String(rawFix[r][roundCol] || "") : "";
+      if (confirmedType === "KNOCKOUT" && confirmedComp && confirmedRound) {
+        maybeAdvanceKnockoutRound_(spreadsheet, confirmedComp, confirmedRound, email);
+      }
 
       logAudit_(spreadsheet, uid, email, "MATCH_RESULT_CONFIRMED", "Fixture", fixtureId, { confirmedBy: email });
       return { success: true, message: "Match result confirmed successfully." };
@@ -5030,3 +5138,99 @@ function testBackendSetup() {
     return false;
   }
 }
+
+
+function maybeAdvanceKnockoutRound_(spreadsheet, compId, roundName, actorEmail) {
+  try {
+    var result = generateNextKnockoutRoundInDatabase_(spreadsheet, compId, roundName, actorEmail || "SYSTEM");
+    if (result && result.success) return result;
+    return result;
+  } catch (e) {
+    Logger.log("[Auto Advance] " + e.message);
+    return { success:false, message:e.message };
+  }
+}
+function referralCodeForUid_(uid) {
+  var raw = Utilities.base64EncodeWebSafe(String(uid || "")).replace(/=/g, "").toUpperCase();
+  return "CHUKA-" + raw.slice(0, 10);
+}
+function getReferralSheet_(ss) { return getOrCreateSheet_(ss, REFERRALS_SHEET_NAME, REFERRALS_HEADERS); }
+function getRewardClaimsSheet_(ss) { return getOrCreateSheet_(ss, REWARD_CLAIMS_SHEET_NAME, REWARD_CLAIMS_HEADERS); }
+function findReferralCodeOwner_(ss, code) {
+  if (!code) return null;
+  var sheet = getReferralSheet_(ss), vals = sheet.getDataRange().getValues();
+  for (var i=1;i<vals.length;i++) {
+    if (String(vals[i][2]||"").toUpperCase() === code.toUpperCase()) return { referrerUid:String(vals[i][1]||""), code:String(vals[i][2]||""), alreadyReferred:false };
+  }
+  // Any valid user's deterministic code is accepted; verify against Users.
+  var users=getOrCreateUsersSheet_(ss), uv=users.getDataRange().getValues();
+  for (var j=1;j<uv.length;j++) {
+    var uid=String(uv[j][0]||"");
+    if (referralCodeForUid_(uid) === code.toUpperCase()) {
+      for (var k=1;k<vals.length;k++) if (String(vals[k][3]||"") === uid) return {referrerUid:uid, code:code, alreadyReferred:true};
+      return {referrerUid:uid, code:code, alreadyReferred:false};
+    }
+  }
+  return null;
+}
+function recordReferral_(ss, referrerUid, code, referredUid, compId) {
+  var sh=getReferralSheet_(ss); var vals=sh.getDataRange().getValues();
+  for (var i=1;i<vals.length;i++) if (String(vals[i][3]||"")===String(referredUid)) return;
+  sh.appendRow(["REF-"+Date.now(),referrerUid,code,referredUid,compId,"PENDING",new Date().toISOString(),""]);
+}
+function qualifyReferralForRegistration_(ss, regId) {
+  var rs=getOrCreateSheet_(ss,REGISTRATIONS_SHEET_NAME,REGISTRATIONS_HEADERS), rv=rs.getDataRange().getValues();
+  var regUid="";
+  for(var i=1;i<rv.length;i++) if(String(rv[i][0]||"")===String(regId)) { regUid=String(rv[i][2]||""); break; }
+  if(!regUid) return;
+  var sh=getReferralSheet_(ss), vals=sh.getDataRange().getValues();
+  for(var j=1;j<vals.length;j++) if(String(vals[j][3]||"")===regUid && String(vals[j][5]||"")!=="QUALIFIED") { sh.getRange(j+1,6).setValue("QUALIFIED"); sh.getRange(j+1,8).setValue(new Date().toISOString()); break; }
+}
+function referralStats_(ss, uid) {
+  var sh=getReferralSheet_(ss), vals=sh.getDataRange().getValues(), q=0,p=0;
+  for(var i=1;i<vals.length;i++) if(String(vals[i][1]||"")===String(uid)) { if(String(vals[i][5]||"")==="QUALIFIED") q++; else p++; }
+  var claims=getRewardClaimsSheet_(ss), cv=claims.getDataRange().getValues(), redeemed=0;
+  for(var j=1;j<cv.length;j++) if(String(cv[j][1]||"")===String(uid) && String(cv[j][2]||"")==="KNOCKOUT_TICKET") redeemed += Number(cv[j][3]||0);
+  var earned=Math.floor(q/10), available=Math.max(0,earned-redeemed);
+  return {verifiedReferrals:q,pendingReferrals:p,qualifiedTickets:earned,redeemedTickets:redeemed,availableTickets:available,nextTicketAt:(Math.floor(q/10)+1)*10};
+}
+function getReferralDashboard_(ss, auth) {
+  var code=referralCodeForUid_(auth.uid), stats=referralStats_(ss,auth.uid);
+  var base=ScriptApp.getService().getUrl() || "";
+  return { referralCode:code, referralLink:"", verifiedReferrals:stats.verifiedReferrals, pendingReferrals:stats.pendingReferrals, qualifiedTickets:stats.qualifiedTickets, redeemedTickets:stats.redeemedTickets, availableTickets:stats.availableTickets, nextTicketAt:stats.nextTicketAt };
+}
+function claimReferralTicket_(ss, auth) {
+  var st=referralStats_(ss,auth.uid); if(st.availableTickets<1) return {success:false,message:"You need 10 verified referrals for each free Knockout ticket."};
+  var sh=getRewardClaimsSheet_(ss); sh.appendRow(["CLAIM-"+Date.now(),auth.uid,"KNOCKOUT_TICKET",1,new Date().toISOString()]);
+  return {success:true,message:"Free Knockout ticket claimed.",availableTickets:st.availableTickets-1};
+}
+function consumeAvailableReferralTicket_(ss, uid) {
+  var st=referralStats_(ss,uid); if(st.availableTickets<1) return false;
+  var sh=getRewardClaimsSheet_(ss); sh.appendRow(["USE-"+Date.now(),uid,"KNOCKOUT_TICKET",1,new Date().toISOString()]); return true;
+}
+function getManagedLeagues_(ss, uid) {
+  var sh=getOrCreateSheet_(ss,MANAGED_LEAGUES_SHEET_NAME,MANAGED_LEAGUES_HEADERS), vals=sh.getDataRange().getValues(), out=[];
+  var comps=getCompetitionsFromDatabase_(ss);
+  for(var i=1;i<vals.length;i++) if(String(vals[i][1]||"")===String(uid)) { var id=String(vals[i][0]||""), c=comps.filter(function(x){return x.CompetitionID===id;})[0]; if(c) out.push({CompetitionID:id,Name:c.Name,ManagerID:uid,ShareCode:String(vals[i][2]||""),MatchWindow:String(vals[i][3]||""),RegistrationEnd:c.RegistrationEnd,Status:c.Status,RegisteredCount:c.RegisteredCount||0}); }
+  return out;
+}
+function isManagedLeagueOwner_(ss, compId, uid) { var sh=getOrCreateSheet_(ss,MANAGED_LEAGUES_SHEET_NAME,MANAGED_LEAGUES_HEADERS),v=sh.getDataRange().getValues(); for(var i=1;i<v.length;i++) if(String(v[i][0]||"")===String(compId)&&String(v[i][1]||"")===String(uid)) return true; return false; }
+function createManagedLeagueInDatabase_(ss, auth, body) {
+  var name=String(body.name||"").trim(); if(!name) return {success:false,message:"League name is required."};
+  var id="LEAGUE-"+Date.now(); var share=referralCodeForUid_(auth.uid)+"-"+String(Date.now()).slice(-5);
+  var comp=saveCompetitionInDatabase_(ss,{CompetitionID:id,Name:name,Description:String(body.description||"Player-created community league"),CompetitionType:"LEAGUE",Format:"Round Robin",Division:"OPEN",MinPlayers:Number(body.minPlayers||2),MaxPlayers:Number(body.maxPlayers||32),EntryFee:Number(body.entryFee||0),PrizeAmount:Number(body.prizeAmount||0),Currency:"KES",RegistrationStart:new Date().toISOString(),RegistrationEnd:String(body.registrationEnd||""),StartDate:String(body.startDate||""),EndDate:String(body.endDate||""),StartTime:String(body.matchWindow||""),Status:"OPEN",CreatedBy:auth.uid});
+  var sh=getOrCreateSheet_(ss,MANAGED_LEAGUES_SHEET_NAME,MANAGED_LEAGUES_HEADERS); sh.appendRow([id,auth.uid,share,String(body.matchWindow||"Saturday 2:00 PM – 6:00 PM"),new Date().toISOString()]);
+  return {success:true,competition:comp,shareUrl:(ScriptApp.getService().getUrl()||"")+"?league="+encodeURIComponent(id)+"&code="+encodeURIComponent(share)};
+}
+function submitAdvertisementInDatabase_(ss, auth, body) {
+  var sh=getOrCreateSheet_(ss,ADVERTISEMENTS_SHEET_NAME,ADVERTISEMENTS_HEADERS), now=new Date().toISOString(), id="AD-"+Date.now();
+  sh.appendRow([id,String(body.businessName||""),String(body.category||""),String(body.description||""),String(body.phone||""),String(body.whatsapp||""),String(body.location||""),String(body.imageURL||""),String(body.websiteURL||""),String(body.packageName||"7 Days"),Number(body.amount||0),"KES",String(body.paymentReference||""),String(body.paymentReference||"")?"PENDING_REVIEW":"PENDING_PAYMENT","","",now]);
+  return {success:true,ad:{AdID:id,BusinessName:String(body.businessName||""),Category:String(body.category||""),Description:String(body.description||""),Package:String(body.packageName||"7 Days"),Amount:Number(body.amount||0),Currency:"KES",Status:String(body.paymentReference||"")?"PENDING_REVIEW":"PENDING_PAYMENT",CreatedAt:now}};
+}
+function getActiveAdvertisements_(ss) { var sh=getOrCreateSheet_(ss,ADVERTISEMENTS_SHEET_NAME,ADVERTISEMENTS_HEADERS),v=sh.getDataRange().getValues(),out=[],now=Date.now(); for(var i=1;i<v.length;i++){ if(String(v[i][13]||"")==="APPROVED"){var end=v[i][15]?new Date(v[i][15]).getTime():0;if(!end||end>now)out.push({AdID:String(v[i][0]||""),BusinessName:String(v[i][1]||""),Category:String(v[i][2]||""),Description:String(v[i][3]||""),Phone:String(v[i][4]||""),WhatsApp:String(v[i][5]||""),Location:String(v[i][6]||""),ImageURL:String(v[i][7]||""),WebsiteURL:String(v[i][8]||""),Package:String(v[i][9]||""),Amount:Number(v[i][10]||0),Currency:String(v[i][11]||"KES"),Status:"APPROVED",StartAt:String(v[i][14]||""),EndAt:String(v[i][15]||""),CreatedAt:String(v[i][16]||"")});}} return out; }
+function getPlatformSettings_(ss) { var sh=getOrCreateSheet_(ss,PLATFORM_SETTINGS_SHEET_NAME,PLATFORM_SETTINGS_HEADERS),v=sh.getDataRange().getValues(),o={}; for(var i=1;i<v.length;i++) o[String(v[i][0]||"")]=String(v[i][1]||""); return o; }
+
+function setPlatformSetting_(ss,key,value){ var sh=getOrCreateSheet_(ss,PLATFORM_SETTINGS_SHEET_NAME,PLATFORM_SETTINGS_HEADERS),v=sh.getDataRange().getValues(),now=new Date().toISOString(); for(var i=1;i<v.length;i++){if(String(v[i][0]||"")===String(key||"")){sh.getRange(i+1,2).setValue(String(value||""));sh.getRange(i+1,3).setValue(now);return {success:true};}} sh.appendRow([String(key||""),String(value||""),now]); return {success:true}; }
+
+function getAllAdvertisements_(ss){ var sh=getOrCreateSheet_(ss,ADVERTISEMENTS_SHEET_NAME,ADVERTISEMENTS_HEADERS),v=sh.getDataRange().getValues(),out=[]; for(var i=1;i<v.length;i++) out.push({AdID:String(v[i][0]||""),BusinessName:String(v[i][1]||""),Category:String(v[i][2]||""),Description:String(v[i][3]||""),Phone:String(v[i][4]||""),WhatsApp:String(v[i][5]||""),Location:String(v[i][6]||""),ImageURL:String(v[i][7]||""),WebsiteURL:String(v[i][8]||""),Package:String(v[i][9]||""),Amount:Number(v[i][10]||0),Currency:String(v[i][11]||"KES"),PaymentReference:String(v[i][12]||""),Status:String(v[i][13]||"PENDING_PAYMENT"),StartAt:String(v[i][14]||""),EndAt:String(v[i][15]||""),CreatedAt:String(v[i][16]||"")}); return out; }
+function updateAdvertisementStatus_(ss,id,status,startAt,endAt,actor){ var sh=getOrCreateSheet_(ss,ADVERTISEMENTS_SHEET_NAME,ADVERTISEMENTS_HEADERS),v=sh.getDataRange().getValues(); for(var i=1;i<v.length;i++){if(String(v[i][0]||"")===String(id||"")){sh.getRange(i+1,14).setValue(String(status||"")); if(startAt!==undefined) sh.getRange(i+1,15).setValue(String(startAt||"")); if(endAt!==undefined) sh.getRange(i+1,16).setValue(String(endAt||"")); logAudit_(ss,actor,actor,"ADVERTISEMENT_STATUS_UPDATED","Advertisement",id,{status:status}); return {success:true};}} return {success:false,message:"Advertisement not found."}; }

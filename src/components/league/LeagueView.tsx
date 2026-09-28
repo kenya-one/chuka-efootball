@@ -114,6 +114,15 @@ export const LeagueView: React.FC<LeagueViewProps> = ({
     loadLeagueData();
   }, [currentPlayer]);
 
+  useEffect(() => {
+    const hash = typeof window !== 'undefined' ? window.location.hash : '';
+    if (hash.startsWith('#league?')) {
+      const q = new URLSearchParams(hash.slice('#league?'.length));
+      const id = q.get('tournamentId');
+      if (id) setSelectedId(id);
+    }
+  }, []);
+
   // Fixtures + standings follow whichever league is selected
   useEffect(() => {
     if (!activeId) {

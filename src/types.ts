@@ -403,6 +403,50 @@ export interface AdminRegistrationsResponse {
   };
 }
 
+
+export interface ReferralDashboard {
+  referralCode: string;
+  referralLink: string;
+  verifiedReferrals: number;
+  pendingReferrals: number;
+  qualifiedTickets: number;
+  redeemedTickets: number;
+  availableTickets: number;
+  nextTicketAt: number;
+}
+
+export interface ManagedLeague {
+  CompetitionID: string;
+  Name: string;
+  ManagerID: string;
+  ManagerName?: string;
+  ShareCode: string;
+  MatchWindow: string;
+  RegistrationEnd?: string;
+  Status: string;
+  RegisteredCount?: number;
+}
+
+export interface AdvertisementRecord {
+  AdID: string;
+  BusinessName: string;
+  Category: string;
+  Description: string;
+  Phone?: string;
+  WhatsApp?: string;
+  Location?: string;
+  ImageURL?: string;
+  WebsiteURL?: string;
+  Package: string;
+  Amount: number;
+  Currency: string;
+  PaymentReference?: string;
+  Status: 'PENDING_PAYMENT' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED' | 'PAUSED' | 'EXPIRED';
+  StartAt?: string;
+  EndAt?: string;
+  CreatedAt: string;
+}
+
 // ==========================================
 // 8. PRODUCTION DATABASE: 21 SHEETS MODEL
 // ==========================================

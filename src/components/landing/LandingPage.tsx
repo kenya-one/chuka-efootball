@@ -22,7 +22,6 @@ import { KonamiLogo } from '../common/KonamiLogo';
 import { EFootballLogo } from '../common/EFootballLogo';
 import { OfficialBrandBanner } from '../common/OfficialBrandBanner';
 import { CHUKA_CREST_URL, CHUKA_CREST_FALLBACK } from '../common/ChukaOfficialCrest';
-import { PlatformMediaBanner } from '../community/PlatformMediaBanner';
 
 interface LandingPageProps {
   theme: ThemeMode;
@@ -181,8 +180,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             Official University eFootball Esports Hub
           </p>
         </div>
-
-        <div className="w-full max-w-sm mb-5"><PlatformMediaBanner /></div>
 
         {/* Action Controls Section */}
         <div className="w-full space-y-3 max-w-sm mx-auto">

@@ -331,13 +331,11 @@ export const CompetitionList: React.FC<CompetitionListProps> = ({
                       <div
                         key={comp.CompetitionID}
                         id={`competition-card-${comp.CompetitionID}`}
-                        className={`group relative rounded-[2rem] overflow-hidden bg-[#0b120d] border transition-all duration-300 flex flex-col shadow-2xl ${isLeague ? 'border-blue-400/20 hover:border-blue-400/60 hover:shadow-blue-950/40' : 'border-[#22c55e]/25 hover:border-[#22c55e]/70 hover:shadow-[#22c55e]/10'}`}
+                        className="rounded-3xl overflow-hidden bg-[#111712] border border-white/10 hover:border-[#22c55e]/40 transition-all flex flex-col shadow-lg"
                       >
                         {/* Banner */}
-                        <div className={`relative px-5 pt-4 pb-12 overflow-hidden ${isLeague ? 'bg-gradient-to-br from-blue-950 via-[#102033] to-[#081018]' : 'bg-gradient-to-br from-[#14532d] via-[#0f2a1a] to-[#07100b]'}`}>
-                          <div className="absolute inset-0 opacity-30 pointer-events-none" style={{ backgroundImage: isLeague ? 'radial-gradient(circle at 85% 20%, rgba(59,130,246,.55), transparent 45%)' : 'radial-gradient(circle at 85% 20%, rgba(34,197,94,.55), transparent 45%)' }} />
-                          <div className="absolute -right-8 -bottom-10 w-32 h-32 rounded-full border border-white/10 opacity-30" />
-                          <div className="relative flex items-center justify-between gap-2">
+                        <div className="relative px-5 pt-4 pb-10 bg-gradient-to-br from-[#14532d] via-[#0f2a1a] to-[#0c1510]">
+                          <div className="flex items-center justify-between gap-2">
                             {getStatusBadge(comp.Status)}
                             <ShareButton
                               compact

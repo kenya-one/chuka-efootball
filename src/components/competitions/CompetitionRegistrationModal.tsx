@@ -1,6 +1,4 @@
-import React, { useState, useEffect } from 'react';
-import { getReferralDashboard } from '../../api/endpoints';
-import type { ReferralDashboard } from '../../types';
+import React, { useState } from 'react';
 import {
   Trophy,
   X,
@@ -35,9 +33,6 @@ export const CompetitionRegistrationModal: React.FC<CompetitionRegistrationModal
   onSuccess,
 }) => {
   const [submitting, setSubmitting] = useState(false);
-  const [referral, setReferral] = useState<ReferralDashboard | null>(null);
-  const [useFreeTicket, setUseFreeTicket] = useState(false);
-  const referralCode = typeof window !== 'undefined' ? (new URLSearchParams(window.location.search).get('ref') || (window.location.hash.includes('?') ? new URLSearchParams(window.location.hash.split('?')[1]).get('ref') : '') || '') : '';
   const [error, setError] = useState<string | null>(null);
   const [successResult, setSuccessResult] = useState<CompetitionRegistration | null>(null);
   const [paymentRef, setPaymentRef] = useState('');
@@ -63,18 +58,6 @@ export const CompetitionRegistrationModal: React.FC<CompetitionRegistrationModal
   const playerDivision = (player?.Division || 'OPEN').toUpperCase();
   const divisionMatches = compDivision === 'OPEN' || compDivision === playerDivision;
 
-  useEffect(() => {
-    if (String(competition.CompetitionType).toUpperCase() === 'KNOCKOUT') {
-      getReferralDashboard().then((r) => { if (r.success && r.data) setReferral(r.data.dashboard); }).catch(() => {});
-    }
-  }, [competition.CompetitionType]);
-
-  useEffect(() => {
-    if (String(competition.CompetitionType).toUpperCase() === 'KNOCKOUT') {
-      getReferralDashboard().then((r) => { if (r.success && r.data) setReferral(r.data.dashboard); }).catch(() => {});
-    }
-  }, [competition.CompetitionType]);
-
   const handleRegister = async () => {
     if (!player) {
       setError('You must create a player profile before registering for competitions.');
@@ -99,9 +82,7 @@ export const CompetitionRegistrationModal: React.FC<CompetitionRegistrationModal
       const reg = await TournamentAdminService.registerPlayerForCompetition(
         competition.CompetitionID,
         player,
-        paymentRef.trim() || undefined,
-        referralCode || undefined,
-        useFreeTicket
+        paymentRef.trim() || undefined
       );
 
       // 2. Also notify backend API
@@ -324,14 +305,8 @@ export const CompetitionRegistrationModal: React.FC<CompetitionRegistrationModal
               )}
             </div>
 
-            {referralCode && (
-              <div className="p-3 rounded-2xl bg-[#22c55e]/10 border border-[#22c55e]/30 text-xs text-[#b7f7c7]">
-                <strong>Referral applied.</strong> This new-member registration qualifies for the referral welcome benefit after eligibility verification.
-              </div>
-            )}
-
             {/* Entry Fee & Official Till Payment Flow */}
-            {entryFee > 0 && !useFreeTicket && !referralCode ? (
+            {entryFee > 0 ? (
               <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-3.5">
                 <div className="flex items-center justify-between">
                   <div className="font-bold text-amber-300 flex items-center gap-1.5 text-sm">
@@ -386,13 +361,6 @@ export const CompetitionRegistrationModal: React.FC<CompetitionRegistrationModal
               </div>
             )}
 
-            {String(competition.CompetitionType).toUpperCase() === 'KNOCKOUT' && referral && referral.availableTickets > 0 && !referralCode && (
-              <label className="flex items-center gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-3 cursor-pointer">
-                <input type="checkbox" checked={useFreeTicket} onChange={(e) => setUseFreeTicket(e.target.checked)} className="w-4 h-4 accent-amber-400" />
-                <span className="text-xs text-amber-100"><strong>Use 1 free Knockout ticket</strong><br/><span className="text-amber-200/70">You have {referral.availableTickets} available.</span></span>
-              </label>
-            )}
-
             {/* Rules reference */}
             {competition.RulesDocumentURL && (
               <div className="flex items-center justify-between text-xs text-gray-400 px-1">
@@ -436,7 +404,7 @@ export const CompetitionRegistrationModal: React.FC<CompetitionRegistrationModal
                   </>
                 ) : (
                   <>
-                    <span>{useFreeTicket || referralCode || entryFee === 0 ? 'Register for Free' : 'I HAVE PAID'}</span>
+                    <span>{entryFee > 0 ? 'I HAVE PAID' : 'Register for Free'}</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}

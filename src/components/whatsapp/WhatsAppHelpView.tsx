@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { ThemeMode, WhatsAppGroup } from '../../types';
 import { CHUKA_CREST_FALLBACK, CHUKA_CREST_URL } from '../common/ChukaOfficialCrest';
-import { EFOOTBALL_LOGO_URL } from "../common/EFootballLogo";
+import { EFOOTBALL_LOGO_URL } from '../rules/OfficialMatchRulesDocument';
 import { TournamentAdminService } from '../../services/tournamentAdminService';
 
 interface WhatsAppHelpViewProps {

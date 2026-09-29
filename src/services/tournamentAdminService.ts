@@ -434,9 +434,7 @@ export class TournamentAdminService {
   public static async registerPlayerForCompetition(
     competitionId: string,
     player: Player,
-    paymentReference?: string,
-    referralCode?: string,
-    useFreeTicket = false
+    paymentReference?: string
   ): Promise<CompetitionRegistration> {
     // 1. Fetch live competition rules
     const comps = await this.getCompetitions();
@@ -472,8 +470,6 @@ export class TournamentAdminService {
         playerId: player.PlayerID,
         efootballUsername: player.eFootballUsername,
         paymentRef: paymentReference || 'PENDING',
-        referralCode: referralCode || '',
-        useFreeTicket,
       },
       true
     );

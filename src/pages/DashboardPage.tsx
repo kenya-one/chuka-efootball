@@ -3,7 +3,7 @@ import {
   Home, Gamepad2, House, Users, UserRound, Shield, LogOut, Plus, Search, MapPin, BriefcaseBusiness, TrendingUp,
   Wifi, Droplets, Zap, MessageCircle, Heart, Flag, CheckCircle2, Clock3, AlertTriangle,
   Menu, X, ChevronRight, BedDouble, HandHelping, Megaphone, Sparkles, Upload, Phone,
-  ExternalLink, RefreshCw, SlidersHorizontal, LockKeyhole, EyeOff, Image as ImageIcon
+  ExternalLink, RefreshCw, SlidersHorizontal, LockKeyhole, EyeOff, Image as ImageIcon, Store
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 import { usePlayer } from '../auth/PlayerProvider';
@@ -18,7 +18,7 @@ import { OfficialBrandBanner } from '../components/common/OfficialBrandBanner';
 import { CHUKA_CREST_URL, CHUKA_CREST_FALLBACK } from '../components/common/ChukaOfficialCrest';
 import { apiClient } from '../api/client';
 
-export type DashboardTab = 'home' | 'efootball' | 'hostels' | 'community' | 'profile' | 'admin';
+export type DashboardTab = 'home' | 'efootball' | 'hostels' | 'community' | 'marketplace' | 'profile' | 'admin';
 
 type Hostel = any;
 type CommunityRequest = any;
@@ -291,15 +291,125 @@ function EFootballView() {
   </div>;
 }
 
+
+function MarketplaceView() {
+  const [businesses, setBusinesses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    const result = await apiClient.get<any>({ action: 'getMarketplaceBusinesses' });
+    if (result.success) {
+      const rows = result.data?.businesses || result.data?.items || result.businesses || [];
+      setBusinesses(Array.isArray(rows) ? rows : []);
+      setMessage('');
+    } else {
+      setMessage(result.error?.message || 'Could not load approved businesses.');
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form).entries());
+    const result = await apiClient.post(data, { action: 'submitMarketplaceBusiness' }, { authenticated: true });
+    setBusy(false);
+    if (result.success) {
+      setShowForm(false);
+      form.reset();
+      setMessage('Business submitted for admin review. It will appear publicly after approval.');
+      await load();
+    } else {
+      setMessage(result.error?.message || 'Could not submit the business. Please try again.');
+    }
+  };
+
+  return <div className="arena-page">
+    <div className="arena-page-title">
+      <div>
+        <Pill tone="green"><Store size={13}/> CHUKA MARKETPLACE</Pill>
+        <h1>Discover local businesses.</h1>
+        <p>Explore businesses around Chuka and submit your own listing. New listings appear after admin approval.</p>
+      </div>
+      <button className="arena-btn arena-btn-primary" onClick={() => setShowForm(true)}><Plus size={17}/> Add business</button>
+    </div>
+
+    {message && <div className="arena-notice"><AlertTriangle size={16}/>{message}</div>}
+    <div className="arena-section-heading">
+      <div><span>LOCAL DIRECTORY</span><h2>Approved businesses</h2></div>
+      <button className="icon-btn" onClick={() => void load()} title="Refresh"><RefreshCw size={17}/></button>
+    </div>
+
+    {loading ? <div className="arena-loading"><RefreshCw className="spin" size={18}/> Loading marketplace…</div> :
+      businesses.length ? <div className="community-grid">
+        {businesses.map((business, index) => {
+          const name = business.business_name || business.businessName || business.name || 'Local business';
+          const description = business.description || '';
+          const location = business.location || '';
+          const image = business.image_url || business.imageUrl || '';
+          const phone = business.whatsapp || business.phone || '';
+          const whatsapp = phone ? whatsappUrl(`Hello, I found ${name} on Chuka Arena and would like to make an inquiry.`, phone) : '';
+          return <Card key={business.id || business.business_id || index} className="marketplace-card">
+            {image && <img className="marketplace-image" src={image} alt={name} loading="lazy"/>}
+            <div className="card-top">
+              <div><Pill tone="green">{business.category || 'BUSINESS'}</Pill><h3>{name}</h3></div>
+            </div>
+            {description && <p className="post-text">{description}</p>}
+            {location && <p className="muted"><MapPin size={14}/> {location}</p>}
+            <div className="post-footer">
+              {whatsapp && <a className="arena-btn arena-btn-whatsapp" href={whatsapp} target="_blank" rel="noopener noreferrer"><MessageCircle size={15}/> WhatsApp</a>}
+              {(business.maps_url || business.mapsUrl) && <a className="arena-btn arena-btn-soft" href={business.maps_url || business.mapsUrl} target="_blank" rel="noopener noreferrer"><MapPin size={15}/> Directions</a>}
+            </div>
+          </Card>;
+        })}
+      </div> : <EmptyState icon={Store} title="No approved businesses yet" text="Business listings will appear here after admin review. You can submit the first listing."/>}
+
+    {showForm && <div className="arena-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setShowForm(false); }}>
+      <div className="arena-modal large">
+        <button className="modal-close" onClick={() => setShowForm(false)} aria-label="Close"><X/></button>
+        <div className="modal-header">
+          <Pill tone="green"><Store size={13}/> NEW BUSINESS</Pill>
+          <h2>Add your business</h2>
+          <p>Your listing will remain pending until an administrator approves it.</p>
+        </div>
+        <form className="form-grid" onSubmit={submit}>
+          <label className="span-2">Business name<input name="business_name" required maxLength={120} placeholder="e.g. Campus Bites"/></label>
+          <label>Category<select name="category" required defaultValue=""><option value="" disabled>Select category</option><option>Food & Drinks</option><option>Shopping</option><option>Beauty & Wellness</option><option>Services</option><option>Accommodation</option><option>Technology</option><option>Other</option></select></label>
+          <label>Location<input name="location" placeholder="e.g. Ndagani, Chuka"/></label>
+          <label className="span-2">Description<textarea name="description" rows={4} placeholder="Describe your business, products or services."/></label>
+          <label>Phone<input name="phone" type="tel" placeholder="07… or +254…"/></label>
+          <label>WhatsApp<input name="whatsapp" type="tel" placeholder="07… or +254…"/></label>
+          <label className="span-2">Google Maps link<input name="maps_url" type="url" placeholder="https://maps.google.com/…"/></label>
+          <label className="span-2">Business image URL<input name="image_url" type="url" placeholder="https://…"/></label>
+          <label>Opening hours<input name="opening_hours" placeholder="e.g. Mon–Sat, 8am–8pm"/></label>
+          <div className="form-actions span-2">
+            <button type="button" className="arena-btn arena-btn-soft" onClick={() => setShowForm(false)}>Cancel</button>
+            <button className="arena-btn arena-btn-primary" disabled={busy}>{busy ? <><RefreshCw className="spin" size={16}/> Submitting…</> : <><CheckCircle2 size={16}/> Submit for approval</>}</button>
+          </div>
+        </form>
+      </div>
+    </div>}
+  </div>;
+}
+
+
 function Shell({ active, setActive, children, onAdmin }: { active:DashboardTab; setActive:(t:DashboardTab)=>void; children:React.ReactNode; onAdmin:()=>void }) {
   const { user, signOut } = useAuth(); const { isAdmin } = useAdmin(); const [mobile,setMobile]=useState(false);
-  const nav=[['home','Home',Home],['efootball','eFootball',Gamepad2],['hostels','Hostels',House],['community','Community',Users],['profile','Profile',UserRound]] as const;
+  const nav=[['home','Home',Home],['efootball','eFootball',Gamepad2],['hostels','Hostels',House],['community','Community',Users],['marketplace','Marketplace',Store],['profile','Profile',UserRound]] as const;
   return <div className="arena-app"><div className="arena-bg"/><header className="arena-header"><div className="arena-brand"><img src={CHUKA_CREST_URL} onError={e=>{e.currentTarget.src=CHUKA_CREST_FALLBACK}} alt="Chuka"/><div><b>CHUKA <span>ARENA</span></b><small>Student community platform</small></div></div><nav className="arena-nav">{nav.map(([id,label,Icon])=><button key={id} className={active===id?'active':''} onClick={()=>setActive(id)}><Icon size={16}/>{label}</button>)}</nav><div className="arena-user"><button className="avatar" onClick={()=>setActive('profile')}>{user?.photoURL?<img src={user.photoURL} alt=""/>:<span>{(user?.displayName||'U').slice(0,1).toUpperCase()}</span>}</button><div className="user-meta"><b>{user?.displayName||'Student'}</b><span>{isAdmin?'Administrator':'Chuka student'}</span></div>{isAdmin&&<button className="admin-mini" onClick={onAdmin}><Shield size={14}/></button>}<button className="logout-mini" onClick={signOut} title="Sign out"><LogOut size={16}/></button><button className="mobile-menu" onClick={()=>setMobile(!mobile)}>{mobile?<X/>:<Menu/>}</button></div></header>{mobile&&<div className="mobile-nav">{nav.map(([id,label,Icon])=><button key={id} className={active===id?'active':''} onClick={()=>{setActive(id);setMobile(false)}}><Icon size={17}/>{label}</button>)}{isAdmin&&<button onClick={onAdmin}><Shield size={17}/> Admin</button>}</div>}<main className="arena-main"><OfficialBrandBanner theme="dark" variant="compact" className="arena-brand-banner"/>{children}</main><footer className="arena-footer"><span>Chuka Arena · Student-first digital hub</span><span>Google Sheets + Apps Script backend · WhatsApp community layer</span></footer></div>;
 }
 
 export const DashboardPage: React.FC = () => {
   const [active,setActive]=useState<DashboardTab>('home'); const { isAdmin }=useAdmin(); const auth = useAuth(); const { player, setPlayerData } = usePlayer();
-  useEffect(()=>{const hash=window.location.hash.replace('#',''); if(['home','efootball','hostels','community','profile'].includes(hash))setActive(hash as DashboardTab);},[]);
+  useEffect(()=>{const hash=window.location.hash.replace('#',''); if(['home','efootball','hostels','community','marketplace','profile'].includes(hash))setActive(hash as DashboardTab);},[]);
   const navigate=(tab:DashboardTab)=>{setActive(tab);window.history.replaceState({},'',`#${tab}`);window.scrollTo({top:0,behavior:'smooth'});};
   const { user, signInWithGoogle, signOut } = auth;
   let content:React.ReactNode;
@@ -307,6 +417,7 @@ export const DashboardPage: React.FC = () => {
   else if(active==='hostels')content=<HostelView/>;
   else if(active==='community')content=<CommunityView/>;
   else if(active==='efootball')content=<EFootballView/>;
+  else if(active==='marketplace')content=<MarketplaceView/>;
   else if(active==='profile')content=<div className="arena-page"><ProfileView authUser={user as any} currentPlayer={player} isGuest={!user} theme="dark" onSignOut={signOut} onPlayerRegistered={(p)=>setPlayerData(p)} onEnterSignIn={()=>{void signInWithGoogle()}}/></div>;
   else content=<div className="arena-page"><AdminMasterHub/></div>;
   return <Shell active={active} setActive={navigate} onAdmin={()=>isAdmin&&navigate('admin')}>{content}</Shell>;

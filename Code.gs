@@ -6057,6 +6057,8 @@ function arenaPublicHostel_(o, rooms, photos){
   var x={
     hostelId:String(o.hostel_id||''), name:String(o.name||''), location:String(o.location||''), customLocation:String(o.custom_location||''),
     estimatedDistance:String(o.estimated_distance||''), distanceUnit:String(o.distance_unit||''), description:String(o.description||''),
+    landlordName:String(o.landlord_name||''), landlordPhone:String(o.landlord_phone||''), landlordWhatsapp:String(o.landlord_whatsapp||''),
+    caretakerName:String(o.caretaker_name||''), caretakerPhone:String(o.caretaker_phone||''), caretakerWhatsapp:String(o.caretaker_whatsapp||''),
     wifiAvailable:arenaBool_(o.wifi_available), waterPayment:String(o.water_payment||''), electricityPayment:String(o.electricity_payment||''),
     status:String(o.status||''), createdAt:String(o.created_at||''), updatedAt:String(o.updated_at||''), isActive:arenaBool_(o.is_active),
     rooms:rooms||[], photos:photos||[]
@@ -6148,9 +6150,13 @@ function uploadHostelPhotoInDatabase_(ss,auth,body){
   var hostIt=root.getFoldersByName('Hostels'); var hostRoot=hostIt.hasNext()?hostIt.next():root.createFolder('Hostels');
   var folderIt=hostRoot.getFoldersByName(hostelId); var folder=folderIt.hasNext()?folderIt.next():hostRoot.createFolder(hostelId);
   var file=folder.createFile(blob); file.setName(arenaText_(body.fileName||('hostel-'+Date.now()+'.jpg'),100));
+  // Approved hostel photos are public listing media. Make the Drive file viewable
+  // by link and store a browser-friendly image URL rather than the Drive UI URL.
+  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (shareErr) {}
+  var imageUrl='https://drive.google.com/uc?export=view&id='+encodeURIComponent(file.getId());
   var ps=arenaSheet_(ss,ARENA_HOSTEL_PHOTOS_SHEET_NAME,ARENA_HOSTEL_PHOTOS_HEADERS); var now=arenaNow_();
-  arenaAppend_(ps,{photo_id:arenaId_('HPH_'),hostel_id:hostelId,photo_type:arenaText_(body.photoType||'INTERIOR',30).toUpperCase(),drive_file_id:file.getId(),image_url:file.getUrl(),caption:arenaText_(body.caption,200),uploaded_by_uid:auth.uid,created_at:now,is_active:true});
-  return {success:true,fileId:file.getId(),imageUrl:file.getUrl(),message:'Hostel photo uploaded.'};
+  arenaAppend_(ps,{photo_id:arenaId_('HPH_'),hostel_id:hostelId,photo_type:arenaText_(body.photoType||'INTERIOR',30).toUpperCase(),drive_file_id:file.getId(),image_url:imageUrl,caption:arenaText_(body.caption,200),uploaded_by_uid:auth.uid,created_at:now,is_active:true});
+  return {success:true,fileId:file.getId(),imageUrl:imageUrl,message:'Hostel photo uploaded.'};
 }
 
 function createCommunityRequestInDatabase_(ss,auth,body){

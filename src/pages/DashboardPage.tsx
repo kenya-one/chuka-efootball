@@ -3,9 +3,10 @@ import {
   Home, Gamepad2, House, Users, UserRound, Shield, LogOut, Plus, Search, MapPin, BriefcaseBusiness, TrendingUp,
   Wifi, Droplets, Zap, MessageCircle, Heart, Flag, CheckCircle2, Clock3, AlertTriangle,
   Menu, X, ChevronRight, BedDouble, HandHelping, Megaphone, Sparkles, Upload, Phone,
-  ExternalLink, RefreshCw, SlidersHorizontal, LockKeyhole, EyeOff
+  ExternalLink, RefreshCw, SlidersHorizontal, LockKeyhole, EyeOff, Image as ImageIcon
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
+import { usePlayer } from '../auth/PlayerProvider';
 import { useAdmin } from '../auth/AdminProvider';
 import { KnockoutView } from '../components/knockout/KnockoutView';
 import { LeagueView } from '../components/league/LeagueView';
@@ -33,8 +34,29 @@ function money(value: any) {
   return Number.isFinite(n) ? `KSh ${n.toLocaleString()}` : String(value);
 }
 
-function whatsappUrl(message: string) {
+function whatsappUrl(message: string, phone?: string) {
+  const raw = String(phone || '').replace(/[^0-9+]/g, '');
+  let digits = raw.replace(/\\D/g, '');
+  if (digits.startsWith('0')) digits = '254' + digits.slice(1);
+  if (digits.startsWith('254')) {
+    return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+  }
+  if (digits.length >= 9) {
+    return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+  }
   return `https://wa.me/?text=${encodeURIComponent(message)}`;
+}
+
+function hostelImageUrl(url: any) {
+  const value = String(url || '').trim();
+  if (!value) return '';
+  const driveMatch = value.match(/(?:id=|\/d\/)([A-Za-z0-9_-]{20,})/);
+  if (driveMatch) return `https://drive.google.com/uc?export=view&id=${driveMatch[1]}`;
+  return value;
+}
+
+function hostelContact(hostel: any) {
+  return hostel.landlordWhatsapp || hostel.landlordPhone || hostel.caretakerWhatsapp || hostel.caretakerPhone || '';
 }
 
 function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
@@ -148,14 +170,59 @@ function HostelCard({ hostel, onOpen }: { hostel: Hostel; onOpen: ()=>void }) {
   const minRent = rooms.map((r:any)=>Number(r.monthlyRent)).filter(Number.isFinite).sort((a,b)=>a-b)[0];
   const statuses = rooms.map((r:any)=>String(r.availabilityStatus||'FULL').toUpperCase());
   const status = statuses.includes('AVAILABLE') ? 'AVAILABLE' : statuses.includes('LIMITED') ? 'LIMITED' : 'FULL';
-  return <Card className="hostel-card"><div className="hostel-photo-placeholder"><House size={32}/><span>{hostel.location}</span></div><div className="hostel-card-body"><div className="card-top"><div><h3>{hostel.name}</h3><span className="muted"><MapPin size={13}/> {hostel.location} · {hostel.estimatedDistance || '—'} {hostel.distanceUnit || 'km'}</span></div><Pill tone={status==='AVAILABLE'?'green':status==='LIMITED'?'amber':'red'}>{status}</Pill></div><div className="room-chip-row">{rooms.slice(0,3).map((r:any)=><span key={r.roomId||r.roomType}><BedDouble size={13}/>{r.roomType} · {money(r.monthlyRent)}</span>)}</div><div className="amenity-row">{hostel.wifiAvailable && <span><Wifi size={14}/> Wi‑Fi</span>}<span><Droplets size={14}/> Water</span><span><Zap size={14}/> Power</span></div><button className="arena-btn arena-btn-soft full" onClick={onOpen}>View details <ChevronRight size={15}/></button></div></Card>;
+  const firstImage = hostelImageUrl(hostel.photos?.[0]?.imageUrl || hostel.imageUrl || hostel.photoUrl);
+  const photoCount = Array.isArray(hostel.photos) ? hostel.photos.length : 0;
+  const contact = hostelContact(hostel);
+  const contactName = hostel.caretakerName || hostel.landlordName || 'landlord/caretaker';
+  const message = `Hello ${contactName}, I found ${hostel.name} on Chuka Arena. I would like to know more about the available rooms, rent and viewing arrangements.`;
+  return <Card className="hostel-card">
+    <div className="hostel-photo-placeholder" onClick={onOpen} role="button" tabIndex={0} onKeyDown={e=>{if(e.key==='Enter')onOpen()}}>
+      {firstImage ? <img src={firstImage} alt={`${hostel.name} hostel`} loading="lazy" referrerPolicy="no-referrer"/> : <House size={32}/>}
+      <span>{hostel.location}</span>
+      {photoCount > 0 && <span className="hostel-photo-count"><ImageIcon size={13}/> {photoCount} image{photoCount===1?'':'s'}</span>}
+    </div>
+    <div className="hostel-card-body">
+      <div className="card-top"><div><h3>{hostel.name}</h3><span className="muted"><MapPin size={13}/> {hostel.location} · {hostel.estimatedDistance || '—'} {hostel.distanceUnit || 'km'}</span></div><Pill tone={status==='AVAILABLE'?'green':status==='LIMITED'?'amber':'red'}>{status}</Pill></div>
+      <div className="room-chip-row">{rooms.slice(0,3).map((r:any)=><span key={r.roomId||r.roomType}><BedDouble size={13}/>{r.roomType} · {money(r.monthlyRent)}</span>)}</div>
+      <div className="amenity-row">{hostel.wifiAvailable && <span><Wifi size={14}/> Wi‑Fi</span>}<span><Droplets size={14}/> Water</span><span><Zap size={14}/> Power</span></div>
+      <div className="hostel-card-actions">
+        <button className="arena-btn arena-btn-soft" onClick={onOpen}><ImageIcon size={15}/> View images & details</button>
+        {contact && <a className="arena-btn arena-btn-primary" href={whatsappUrl(message, contact)} target="_blank" rel="noopener noreferrer"><MessageCircle size={15}/> WhatsApp</a>}
+      </div>
+    </div>
+  </Card>;
 }
 
 function HostelDetail({ hostel, onClose, onUpdated }: { hostel: Hostel; onClose:()=>void; onUpdated:()=>void }) {
   const [room, setRoom] = useState<any>((hostel.rooms||[])[0]);
   const [saving, setSaving] = useState(false);
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const photos = Array.isArray(hostel.photos) ? hostel.photos : [];
+  const contact = hostelContact(hostel);
+  const contactName = hostel.caretakerName || hostel.landlordName || 'landlord/caretaker';
+  const message = `Hello ${contactName}, I found ${hostel.name} on Chuka Arena. I would like to know more about the available rooms, rent and viewing arrangements.`;
   const update = async (status:string) => { if(!room) return; setSaving(true); const r=await apiClient.post({hostelId:hostel.hostelId,roomId:room.roomId,availabilityStatus:status,availableCount:status==='FULL'?0:Number(room.availableCount||0),note:'Updated from Chuka Arena'}, {action:'updateHostelAvailability'}, {authenticated:true}); setSaving(false); if(r.success){setRoom({...room,availabilityStatus:status});onUpdated();} };
-  return <div className="arena-modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><div className="arena-modal large"><button className="modal-close" onClick={onClose}><X/></button><div className="modal-header"><div><Pill tone="green"><CheckCircle2 size={13}/> APPROVED LISTING</Pill><h2>{hostel.name}</h2><p><MapPin size={14}/> {hostel.location} · approx. {hostel.estimatedDistance || '—'} {hostel.distanceUnit || 'km'}</p></div></div><div className="detail-grid"><div><h4>Rooms & live availability</h4>{(hostel.rooms||[]).map((r:any)=><button key={r.roomId} onClick={()=>setRoom(r)} className={`room-detail ${room?.roomId===r.roomId?'selected':''}`}><span><b>{r.roomType}</b><small>{money(r.monthlyRent)} / month</small></span><Pill tone={String(r.availabilityStatus).toUpperCase()==='AVAILABLE'?'green':String(r.availabilityStatus).toUpperCase()==='LIMITED'?'amber':'red'}>{r.availabilityStatus || 'FULL'} {r.availableCount ? `· ${r.availableCount}`:''}</Pill></button>)}{room && <div className="availability-actions"><span>Update availability</span><div><button disabled={saving} onClick={()=>update('AVAILABLE')}>Available</button><button disabled={saving} onClick={()=>update('LIMITED')}>Limited</button><button disabled={saving} onClick={()=>update('FULL')}>Full</button></div></div>}</div><div><h4>Hostel details</h4><div className="detail-list"><div><Wifi/><span>Wi‑Fi<b>{hostel.wifiAvailable ? 'Available':'Not listed'}</b></span></div><div><Droplets/><span>Water<b>{hostel.waterPayment || 'Not listed'}</b></span></div><div><Zap/><span>Electricity<b>{hostel.electricityPayment || 'Not listed'}</b></span></div><div><Phone/><span>Care contact<b>{hostel.caretakerName || hostel.landlordName || 'Provided privately'}</b></span></div></div>{hostel.description && <p className="detail-description">{hostel.description}</p>}</div></div><div className="modal-footer-note"><Clock3 size={14}/> Availability is community-updated and should be confirmed before paying or moving in.</div></div></div>;
+  return <div className="arena-modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}>
+    <div className="arena-modal large hostel-detail-modal">
+      <button className="modal-close" onClick={onClose}><X/></button>
+      <div className="modal-header"><div><Pill tone="green"><CheckCircle2 size={13}/> APPROVED LISTING</Pill><h2>{hostel.name}</h2><p><MapPin size={14}/> {hostel.location} · approx. {hostel.estimatedDistance || '—'} {hostel.distanceUnit || 'km'}</p></div></div>
+      {photos.length > 0 && <div className="hostel-gallery">
+        <div className="hostel-gallery-main">
+          <img src={hostelImageUrl(photos[photoIndex]?.imageUrl)} alt={photos[photoIndex]?.caption || `${hostel.name} image ${photoIndex+1}`} referrerPolicy="no-referrer"/>
+          <button type="button" className="gallery-arrow left" disabled={photos.length<2} onClick={()=>setPhotoIndex((photoIndex-1+photos.length)%photos.length)} aria-label="Previous image">‹</button>
+          <button type="button" className="gallery-arrow right" disabled={photos.length<2} onClick={()=>setPhotoIndex((photoIndex+1)%photos.length)} aria-label="Next image">›</button>
+          <span className="gallery-counter">{photoIndex+1} / {photos.length}</span>
+        </div>
+        {photos.length > 1 && <div className="hostel-gallery-thumbs">{photos.map((p:any,i:number)=><button type="button" key={p.photoId||i} className={i===photoIndex?'active':''} onClick={()=>setPhotoIndex(i)}><img src={hostelImageUrl(p.imageUrl)} alt="" loading="lazy" referrerPolicy="no-referrer"/></button>)}</div>}
+      </div>}
+      {contact && <div className="hostel-contact-bar"><div><b>Contact {contactName}</b><span>Ask about rooms, rent, availability and viewing.</span></div><a className="arena-btn arena-btn-primary" href={whatsappUrl(message, contact)} target="_blank" rel="noopener noreferrer"><MessageCircle size={16}/> Request more on WhatsApp</a></div>}
+      <div className="detail-grid">
+        <div><h4>Rooms & live availability</h4>{(hostel.rooms||[]).map((r:any)=><button key={r.roomId} onClick={()=>setRoom(r)} className={`room-detail ${room?.roomId===r.roomId?'selected':''}`}><span><b>{r.roomType}</b><small>{money(r.monthlyRent)} / month</small></span><Pill tone={String(r.availabilityStatus).toUpperCase()==='AVAILABLE'?'green':String(r.availabilityStatus).toUpperCase()==='LIMITED'?'amber':'red'}>{r.availabilityStatus || 'FULL'} {r.availableCount ? `· ${r.availableCount}`:''}</Pill></button>)}{room && <div className="availability-actions"><span>Update availability</span><div><button disabled={saving} onClick={()=>update('AVAILABLE')}>Available</button><button disabled={saving} onClick={()=>update('LIMITED')}>Limited</button><button disabled={saving} onClick={()=>update('FULL')}>Full</button></div></div>}</div>
+        <div><h4>Hostel details</h4><div className="detail-list"><div><Wifi/><span>Wi‑Fi<b>{hostel.wifiAvailable ? 'Available':'Not listed'}</b></span></div><div><Droplets/><span>Water<b>{hostel.waterPayment || 'Not listed'}</b></span></div><div><Zap/><span>Electricity<b>{hostel.electricityPayment || 'Not listed'}</b></span></div><div><Phone/><span>Care contact<b>{contactName}</b></span></div></div>{hostel.description && <p className="detail-description">{hostel.description}</p>}</div>
+      </div>
+      <div className="modal-footer-note"><Clock3 size={14}/> Availability is community-updated and should be confirmed before paying or moving in.</div>
+    </div>
+  </div>;
 }
 
 function HostelForm({ onClose, onSaved }: { onClose:()=>void; onSaved:()=>void }) {
@@ -167,7 +234,7 @@ function HostelForm({ onClose, onSaved }: { onClose:()=>void; onSaved:()=>void }
     if(hostelId&&photos.length){
       for(const file of photos.slice(0,4)){
         const data=await new Promise<string>((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(String(fr.result||''));fr.onerror=reject;fr.readAsDataURL(file);});
-        const up=await apiClient.post({hostelId,fileName:file.name,mimeType:file.type,fileData:data,photoType:'INTERIOR'}, {action:'uploadHostelPhoto'}, {authenticated:true});
+        const up=await apiClient.post({hostelId,fileName:file.name,mimeType:file.type,fileData:data,photoType:(photos.indexOf(file) < 2 ? 'ENVIRONMENT' : 'HOUSE')}, {action:'uploadHostelPhoto'}, {authenticated:true});
         if(!up.success){setMsg(`Hostel saved, but ${file.name} could not be uploaded.`);setBusy(false);return;}
       }
     }
@@ -202,7 +269,26 @@ function CommunityView() {
 
 function EFootballView() {
   const [tab,setTab]=useState<'competitions'|'cup'|'league'|'entries'>('competitions');
-  return <div className="arena-page"><div className="arena-page-title"><div><Pill tone="green"><Gamepad2 size={13}/> eFOOTBALL</Pill><h1>Compete inside the Arena.</h1><p>Tournaments, leagues, fixtures, registrations and your player profile remain on the existing eFootball engine.</p></div></div><div className="community-tabs efootball-tabs"><button className={tab==='competitions'?'active':''} onClick={()=>setTab('competitions')}>Discover</button><button className={tab==='cup'?'active':''} onClick={()=>setTab('cup')}>Weekly Cup</button><button className={tab==='league'?'active':''} onClick={()=>setTab('league')}>League</button><button className={tab==='entries'?'active':''} onClick={()=>setTab('entries')}>My entries</button></div><Card className="efootball-stage">{tab==='competitions'&&<CompetitionList/>}{tab==='cup'&&<KnockoutView/>}{tab==='league'&&<LeagueView/>}{tab==='entries'&&<MyRegistrationsView/>}</Card></div>;
+  const { user } = useAuth();
+  const { player } = usePlayer();
+  const isGuest = !user;
+  return <div className="arena-page">
+    <div className="arena-page-title">
+      <div><Pill tone="green"><Gamepad2 size={13}/> eFOOTBALL</Pill><h1>Compete inside the Arena.</h1><p>Rules, registered players, brackets, fixtures, standings, results and your entries stay connected to the official eFootball engine.</p></div>
+    </div>
+    <div className="community-tabs efootball-tabs">
+      <button className={tab==='competitions'?'active':''} onClick={()=>setTab('competitions')}>Discover</button>
+      <button className={tab==='cup'?'active':''} onClick={()=>setTab('cup')}>Weekly Cup</button>
+      <button className={tab==='league'?'active':''} onClick={()=>setTab('league')}>League</button>
+      <button className={tab==='entries'?'active':''} onClick={()=>setTab('entries')}>My entries</button>
+    </div>
+    <Card className="efootball-stage">
+      {tab==='competitions'&&<CompetitionList player={player} onNavigateToProfile={()=>{}}/>}
+      {tab==='cup'&&<KnockoutView currentPlayer={player} isGuest={isGuest} theme="dark"/>}
+      {tab==='league'&&<LeagueView currentPlayer={player} isGuest={isGuest} theme="dark"/>}
+      {tab==='entries'&&<MyRegistrationsView/>}
+    </Card>
+  </div>;
 }
 
 function Shell({ active, setActive, children, onAdmin }: { active:DashboardTab; setActive:(t:DashboardTab)=>void; children:React.ReactNode; onAdmin:()=>void }) {
@@ -212,10 +298,16 @@ function Shell({ active, setActive, children, onAdmin }: { active:DashboardTab; 
 }
 
 export const DashboardPage: React.FC = () => {
-  const [active,setActive]=useState<DashboardTab>('home'); const { isAdmin }=useAdmin();
+  const [active,setActive]=useState<DashboardTab>('home'); const { isAdmin }=useAdmin(); const auth = useAuth(); const { player, setPlayerData } = usePlayer();
   useEffect(()=>{const hash=window.location.hash.replace('#',''); if(['home','efootball','hostels','community','profile'].includes(hash))setActive(hash as DashboardTab);},[]);
   const navigate=(tab:DashboardTab)=>{setActive(tab);window.history.replaceState({},'',`#${tab}`);window.scrollTo({top:0,behavior:'smooth'});};
+  const { user, signInWithGoogle, signOut } = auth;
   let content:React.ReactNode;
-  if(active==='home')content=<HomeView onNavigate={navigate}/>; else if(active==='hostels')content=<HostelView/>; else if(active==='community')content=<CommunityView/>; else if(active==='efootball')content=<EFootballView/>; else if(active==='profile')content=<div className="arena-page"><ProfileView/></div>; else content=<div className="arena-page"><AdminMasterHub/></div>;
+  if(active==='home')content=<HomeView onNavigate={navigate}/>;
+  else if(active==='hostels')content=<HostelView/>;
+  else if(active==='community')content=<CommunityView/>;
+  else if(active==='efootball')content=<EFootballView/>;
+  else if(active==='profile')content=<div className="arena-page"><ProfileView authUser={user as any} currentPlayer={player} isGuest={!user} theme="dark" onSignOut={signOut} onPlayerRegistered={(p)=>setPlayerData(p)} onEnterSignIn={()=>{void signInWithGoogle()}}/></div>;
+  else content=<div className="arena-page"><AdminMasterHub/></div>;
   return <Shell active={active} setActive={navigate} onAdmin={()=>isAdmin&&navigate('admin')}>{content}</Shell>;
 };

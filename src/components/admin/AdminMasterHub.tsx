@@ -14,6 +14,7 @@ import { AdminAuditLogsView } from './AdminAuditLogsView';
 import { AdminCompetitionsView } from './AdminCompetitionsView';
 import { AdminTrendsView } from './AdminTrendsView';
 import { AdminJobsGigsView } from './AdminJobsGigsView';
+import { AdminHostelsView } from './AdminHostelsView';
 import {
   LayoutDashboard,
   Trophy,
@@ -28,10 +29,12 @@ import {
   MessageCircle,
   FileText,
   Layers,
+  House,
 } from 'lucide-react';
 
 export type AdminSection =
   | 'overview'
+  | 'hostels'
   | 'competitions'
   | 'knockout'
   | 'league'
@@ -93,6 +96,20 @@ export const AdminMasterHub: React.FC = () => {
           >
             <LayoutDashboard className="w-3.5 h-3.5" />
             <span>Overview</span>
+          </button>
+
+          {/* Hostel listings and approvals */}
+          <button
+            type="button"
+            onClick={() => setActiveSection('hostels')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+              activeSection === 'hostels'
+                ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20'
+                : 'text-gray-400 hover:text-emerald-300 hover:bg-white/5'
+            }`}
+          >
+            <House className="w-3.5 h-3.5" />
+            <span>Hostels</span>
           </button>
 
           {/* All Competitions Master */}
@@ -261,6 +278,7 @@ export const AdminMasterHub: React.FC = () => {
         {activeSection === 'overview' && (
           <AdminOverviewView onNavigateSection={(sec) => setActiveSection(sec as AdminSection)} />
         )}
+        {activeSection === 'hostels' && <AdminHostelsView />}
         {activeSection === 'competitions' && <AdminCompetitionsView />}
         {activeSection === 'knockout' && (
           <AdminKnockoutView onSelectCompetitionForFixtures={handleSelectCompetitionForFixtures} />

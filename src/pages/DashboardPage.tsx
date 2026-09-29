@@ -51,7 +51,7 @@ function hostelImageUrl(url: any) {
   const value = String(url || '').trim();
   if (!value) return '';
   const driveMatch = value.match(/(?:id=|\/d\/)([A-Za-z0-9_-]{20,})/);
-  if (driveMatch) return `https://drive.google.com/uc?export=view&id=${driveMatch[1]}`;
+  if (driveMatch) return `https://drive.google.com/thumbnail?id=${driveMatch[1]}&sz=w1200`;
   return value;
 }
 
@@ -197,11 +197,12 @@ function HostelDetail({ hostel, onClose, onUpdated }: { hostel: Hostel; onClose:
   const [room, setRoom] = useState<any>((hostel.rooms||[])[0]);
   const [saving, setSaving] = useState(false);
   const [photoIndex, setPhotoIndex] = useState(0);
+  const [availabilityMessage, setAvailabilityMessage] = useState('');
   const photos = Array.isArray(hostel.photos) ? hostel.photos : [];
   const contact = hostelContact(hostel);
   const contactName = hostel.caretakerName || hostel.landlordName || 'landlord/caretaker';
   const message = `Hello ${contactName}, I found ${hostel.name} on Chuka Arena. I would like to know more about the available rooms, rent and viewing arrangements.`;
-  const update = async (status:string) => { if(!room) return; setSaving(true); const r=await apiClient.post({hostelId:hostel.hostelId,roomId:room.roomId,availabilityStatus:status,availableCount:status==='FULL'?0:Number(room.availableCount||0),note:'Updated from Chuka Arena'}, {action:'updateHostelAvailability'}, {authenticated:true}); setSaving(false); if(r.success){setRoom({...room,availabilityStatus:status});onUpdated();} };
+  const update = async (status:string) => { if(!room) return; setSaving(true); setAvailabilityMessage(''); const count=status==='FULL'?0:Math.max(0,Number(room.availableCount||0)); const r=await apiClient.post({hostelId:hostel.hostelId,roomId:room.roomId,availabilityStatus:status,availableCount:count,note:'Updated from Chuka Arena'}, {action:'updateHostelAvailability'}, {authenticated:true}); setSaving(false); if(r.success){setRoom({...room,availabilityStatus:status,availableCount:count});setAvailabilityMessage('Availability updated.');onUpdated();} else setAvailabilityMessage(r.error?.message||'Could not update availability. Please sign in and try again.'); };
   return <div className="arena-modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}>
     <div className="arena-modal large hostel-detail-modal">
       <button className="modal-close" onClick={onClose}><X/></button>
@@ -217,7 +218,7 @@ function HostelDetail({ hostel, onClose, onUpdated }: { hostel: Hostel; onClose:
       </div>}
       {contact && <div className="hostel-contact-bar"><div><b>Contact {contactName}</b><span>Ask about rooms, rent, availability and viewing.</span></div><a className="arena-btn arena-btn-primary" href={whatsappUrl(message, contact)} target="_blank" rel="noopener noreferrer"><MessageCircle size={16}/> Request more on WhatsApp</a></div>}
       <div className="detail-grid">
-        <div><h4>Rooms & live availability</h4>{(hostel.rooms||[]).map((r:any)=><button key={r.roomId} onClick={()=>setRoom(r)} className={`room-detail ${room?.roomId===r.roomId?'selected':''}`}><span><b>{r.roomType}</b><small>{money(r.monthlyRent)} / month</small></span><Pill tone={String(r.availabilityStatus).toUpperCase()==='AVAILABLE'?'green':String(r.availabilityStatus).toUpperCase()==='LIMITED'?'amber':'red'}>{r.availabilityStatus || 'FULL'} {r.availableCount ? `· ${r.availableCount}`:''}</Pill></button>)}{room && <div className="availability-actions"><span>Update availability</span><div><button disabled={saving} onClick={()=>update('AVAILABLE')}>Available</button><button disabled={saving} onClick={()=>update('LIMITED')}>Limited</button><button disabled={saving} onClick={()=>update('FULL')}>Full</button></div></div>}</div>
+        <div><h4>Rooms & live availability</h4>{(hostel.rooms||[]).map((r:any)=><button key={r.roomId} onClick={()=>setRoom(r)} className={`room-detail ${room?.roomId===r.roomId?'selected':''}`}><span><b>{r.roomType}</b><small>{money(r.monthlyRent)} / month</small></span><Pill tone={String(r.availabilityStatus).toUpperCase()==='AVAILABLE'?'green':String(r.availabilityStatus).toUpperCase()==='LIMITED'?'amber':'red'}>{r.availabilityStatus || 'FULL'} {r.availableCount ? `· ${r.availableCount}`:''}</Pill></button>)}{room && <div className="availability-actions"><span>Update availability</span><label className="availability-count">Vacant rooms <input type="number" min="0" value={room.availableCount ?? 0} disabled={saving} onChange={e=>setRoom({...room,availableCount:Math.max(0,Number(e.target.value)||0)})}/></label><div><button disabled={saving} onClick={()=>update('AVAILABLE')}>Available</button><button disabled={saving} onClick={()=>update('LIMITED')}>Limited</button><button disabled={saving} onClick={()=>update('FULL')}>Full</button></div>{availabilityMessage && <small role="status">{availabilityMessage}</small>}</div>}</div>
         <div><h4>Hostel details</h4><div className="detail-list"><div><Wifi/><span>Wi‑Fi<b>{hostel.wifiAvailable ? 'Available':'Not listed'}</b></span></div><div><Droplets/><span>Water<b>{hostel.waterPayment || 'Not listed'}</b></span></div><div><Zap/><span>Electricity<b>{hostel.electricityPayment || 'Not listed'}</b></span></div><div><Phone/><span>Care contact<b>{contactName}</b></span></div></div>{hostel.description && <p className="detail-description">{hostel.description}</p>}</div>
       </div>
       <div className="modal-footer-note"><Clock3 size={14}/> Availability is community-updated and should be confirmed before paying or moving in.</div>

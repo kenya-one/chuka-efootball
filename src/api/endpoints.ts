@@ -1709,3 +1709,10 @@ export const getCompetitions = CompetitionApiService.getCompetitions;
 export const getCompetition = CompetitionApiService.getCompetition;
 export const registerForCompetition = CompetitionApiService.registerForCompetition;
 export const getMyRegistrations = CompetitionApiService.getMyRegistrations;
+
+export async function getHostelProgramStatus(): Promise<ApiResponse<any>> { return await apiPost<any>('getHostelProgramStatus', {}, true); }
+export async function createHostelProgramPayment(paymentReference: string): Promise<ApiResponse<any>> { return await apiPost<any>('createHostelProgramPayment', { paymentReference }, true); }
+export async function getJobsGigs(): Promise<ApiResponse<any>> { return await apiPost<any>('getJobsGigs', {}, false); }
+export async function createJobGig(payload: any): Promise<ApiResponse<any>> { return await apiPost<any>('createJobGig', payload, true); }
+export async function getTrends(): Promise<ApiResponse<any>> { return await apiPost<any>('getTrends', {}, false); }
+export async function suggestWhatsAppGroup(payload: any): Promise<ApiResponse<any>> { return await apiPost<any>('suggestWhatsAppGroup', payload, true); }

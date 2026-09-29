@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { apiClient } from '../../api/client';
 import {
   MessageCircle,
   RefreshCw,
@@ -42,6 +43,9 @@ const DEFAULT_GROUPS: WhatsAppGroup[] = [
 ];
 
 export const AdminWhatsAppView: React.FC = () => {
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const loadSuggestions = async () => { const r = await apiClient.post<any>({}, {action:'adminGetWhatsAppSuggestions'}, {authenticated:true}); if(r.success) setSuggestions(r.data?.suggestions || []); };
+
   const [groups, setGroups] = useState<WhatsAppGroup[]>(DEFAULT_GROUPS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -74,6 +78,7 @@ export const AdminWhatsAppView: React.FC = () => {
 
   useEffect(() => {
     fetchGroups();
+    loadSuggestions();
   }, [fetchGroups]);
 
   const handleGroupChange = (slotIndex: number, field: keyof WhatsAppGroup, value: any) => {
@@ -318,6 +323,15 @@ export const AdminWhatsAppView: React.FC = () => {
           </button>
         </div>
       </form>
+
+      <div className="mt-8 p-5 rounded-3xl bg-[#111712] border border-white/10">
+        <h3 className="text-sm font-black text-white uppercase tracking-wider">User Group Suggestions</h3>
+        <p className="text-xs text-gray-400 mt-1">Review submitted WhatsApp groups before they become official.</p>
+        <div className="space-y-3 mt-4">
+          {suggestions.map((s:any)=><div key={s.suggestionId} className="p-4 rounded-2xl bg-black/20 border border-white/10 flex flex-col sm:flex-row gap-3 justify-between"><div><b className="text-white text-sm">{s.name}</b><p className="text-xs text-gray-400 mt-1">{s.description}</p><a className="text-[10px] text-emerald-400 break-all" href={s.groupUrl} target="_blank" rel="noreferrer">{s.groupUrl}</a></div><div className="flex gap-2"><button onClick={async()=>{await apiClient.post({suggestionId:s.suggestionId,approve:true},{action:'adminReviewWhatsAppSuggestion'},{authenticated:true});loadSuggestions()}} className="px-3 py-2 rounded-xl bg-emerald-500 text-black text-xs font-black">Approve</button><button onClick={async()=>{await apiClient.post({suggestionId:s.suggestionId,approve:false},{action:'adminReviewWhatsAppSuggestion'},{authenticated:true});loadSuggestions()}} className="px-3 py-2 rounded-xl bg-red-500/15 text-red-300 text-xs font-black">Reject</button></div></div>)}
+          {!suggestions.length && <p className="text-xs text-gray-500">No pending suggestions.</p>}
+        </div>
+      </div>
     </div>
   );
 };

@@ -12,6 +12,8 @@ import { AdminDisputesView } from './AdminDisputesView';
 import { AdminWhatsAppView } from './AdminWhatsAppView';
 import { AdminAuditLogsView } from './AdminAuditLogsView';
 import { AdminCompetitionsView } from './AdminCompetitionsView';
+import { AdminTrendsView } from './AdminTrendsView';
+import { AdminJobsGigsView } from './AdminJobsGigsView';
 import {
   LayoutDashboard,
   Trophy,
@@ -40,7 +42,9 @@ export type AdminSection =
   | 'disputes'
   | 'whatsapp'
   | 'audit'
-  | 'announcements';
+  | 'announcements'
+  | 'trends'
+  | 'jobs';
 
 export const AdminMasterHub: React.FC = () => {
   const { user } = useAuth();
@@ -217,6 +221,11 @@ export const AdminMasterHub: React.FC = () => {
             <span>WhatsApp Groups</span>
           </button>
 
+          {/* Jobs & Gigs */}
+          <button type="button" onClick={() => setActiveSection('jobs')} className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${activeSection === 'jobs' ? 'bg-purple-500 text-black' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}><Users className="w-3.5 h-3.5" /><span>Jobs & Gigs</span></button>
+          {/* Trends */}
+          <button type="button" onClick={() => setActiveSection('trends')} className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${activeSection === 'trends' ? 'bg-blue-500 text-black' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}><Megaphone className="w-3.5 h-3.5" /><span>Trends</span></button>
+
           {/* Announcements */}
           <button
             type="button"
@@ -268,6 +277,8 @@ export const AdminMasterHub: React.FC = () => {
         {activeSection === 'disputes' && <AdminDisputesView />}
         {activeSection === 'whatsapp' && <AdminWhatsAppView />}
         {activeSection === 'announcements' && <AdminAnnouncementsView />}
+        {activeSection === 'jobs' && <AdminJobsGigsView />}
+        {activeSection === 'trends' && <AdminTrendsView />}
         {activeSection === 'audit' && <AdminAuditLogsView />}
       </div>
     </div>

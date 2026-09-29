@@ -733,6 +733,18 @@ function doGet(e) {
       return createJsonResponse_({ success: true, announcements: getAnnouncementsFromDatabase_(ss, params.competitionId || "") });
     }
 
+    if (action === "getMatchRules" || action === "get-match-rules") {
+      var gmrRules = getMatchRulesFromDatabase_(getDatabaseSpreadsheet_());
+      return createJsonResponse_({ success: true, rules: gmrRules, data: { rules: gmrRules } });
+    }
+    if (action === "getLiveDocs" || action === "get-live-docs") {
+      var gldInfo = getLiveDocsInfo_();
+      return createJsonResponse_({ success: true, docs: gldInfo, data: gldInfo });
+    }
+    if (action === "getInvite" || action === "get-invite") {
+      return createJsonResponse_(previewInvite_(getDatabaseSpreadsheet_(), params.code));
+    }
+
     Logger.log("[HTTP GET] Health check request received");
     return createJsonResponse_({
       success: true,
@@ -1179,27 +1191,8 @@ function doPost(e) {
       var grIdToken = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
       var grAuth = grIdToken ? verifyFirebaseIdToken_(grIdToken) : null;
       var regs = getRegistrationsFromDatabase_(grSs, body.competitionId || "");
-      var grIsAdmin = !!(grAuth && grAuth.valid && (grAuth.isAdmin || isAuthorizedAdminEmail_(grAuth.email)));
-      if (action === "my-registrations") {
-        regs = (grAuth && grAuth.valid)
-          ? regs.filter(function(r) { return r.PlayerID === grAuth.uid || r.PlayerID === grAuth.email; })
-          : [];
-      } else if (!grIsAdmin) {
-        // Everyone may see WHO is registered and whether they are verified,
-        // but never payment IDs, verifier identity or other people's account IDs.
-        regs = regs.map(function(r) {
-          var mine = !!(grAuth && grAuth.valid && (r.PlayerID === grAuth.uid || r.PlayerID === grAuth.email));
-          return {
-            RegistrationID: r.RegistrationID,
-            CompetitionID: r.CompetitionID,
-            PlayerID: mine ? r.PlayerID : "",
-            eFootballUsername: r.eFootballUsername,
-            Status: r.Status,
-            PaymentStatus: r.PaymentStatus,
-            RegisteredAt: r.RegisteredAt,
-            VerifiedAt: r.VerifiedAt
-          };
-        });
+      if (action === "my-registrations" && grAuth && grAuth.valid) {
+        regs = regs.filter(function(r) { return r.PlayerID === grAuth.uid || r.PlayerID === grAuth.email; });
       }
       return createJsonResponse_({ success: true, registrations: regs, data: { registrations: regs } });
     }
@@ -1234,11 +1227,6 @@ function doPost(e) {
 
     // 16. Action: adminGetPayments / getPayments
     if (action === "adminGetPayments" || action === "getPayments" || action === "get-payments" || action === "admin-payments") {
-      var gpIdToken = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
-      var gpAdminAuth = verifyFirebaseIdToken_(gpIdToken);
-      if (!gpAdminAuth || !gpAdminAuth.valid || (!gpAdminAuth.isAdmin && !isAuthorizedAdminEmail_(gpAdminAuth.email))) {
-        return createJsonResponse_({ success: false, message: "Unauthorized: Administrator privileges required." });
-      }
       var gpSs = getDatabaseSpreadsheet_();
       var payments = getPaymentsFromDatabase_(gpSs, body.competitionId || "");
       return createJsonResponse_({ success: true, payments: payments, data: { payments: payments } });
@@ -1317,11 +1305,6 @@ function doPost(e) {
 
     // 23. Action: getAdminOverview / admin-overview
     if (action === "getAdminOverview" || action === "admin-overview") {
-      var gaoIdToken = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
-      var gaoAdminAuth = verifyFirebaseIdToken_(gaoIdToken);
-      if (!gaoAdminAuth || !gaoAdminAuth.valid || (!gaoAdminAuth.isAdmin && !isAuthorizedAdminEmail_(gaoAdminAuth.email))) {
-        return createJsonResponse_({ success: false, message: "Unauthorized: Administrator privileges required." });
-      }
       var gaoSs = getDatabaseSpreadsheet_();
       var overview = getAdminOverviewFromDatabase_(gaoSs);
       return createJsonResponse_({ success: true, overview: overview });
@@ -1329,14 +1312,20 @@ function doPost(e) {
 
     // 24. Action: adminGetPlayers / admin-players
     if (action === "adminGetPlayers" || action === "admin-players") {
-      var agpIdToken = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
-      var agpAdminAuth = verifyFirebaseIdToken_(agpIdToken);
-      if (!agpAdminAuth || !agpAdminAuth.valid || (!agpAdminAuth.isAdmin && !isAuthorizedAdminEmail_(agpAdminAuth.email))) {
-        return createJsonResponse_({ success: false, message: "Unauthorized: Administrator privileges required." });
-      }
       var agpSs = getDatabaseSpreadsheet_();
-      var playersList = getAllPlayersFromDatabase_(agpSs, body.search || "");
-      return createJsonResponse_({ success: true, players: playersList });
+      var playersList = getAllPlayersFromDatabase_(agpSs, body.search || params.search || "", {
+        status: body.status || params.status || "",
+        verified: body.verified || params.verified || ""
+      });
+      var allForCounts = getAllPlayersFromDatabase_(agpSs, "", {});
+      var pCounts = { total: allForCounts.length, pending: 0, active: 0, suspended: 0 };
+      for (var pc = 0; pc < allForCounts.length; pc++) {
+        var ps = String(allForCounts[pc].Status).toUpperCase();
+        if (ps === "ACTIVE") pCounts.active++;
+        else if (ps === "SUSPENDED") pCounts.suspended++;
+        else pCounts.pending++;
+      }
+      return createJsonResponse_({ success: true, players: playersList, counts: pCounts, data: { players: playersList, counts: pCounts } });
     }
 
     // 25. Action: getWhatsAppGroups
@@ -1480,6 +1469,165 @@ function doPost(e) {
       var logs = getAuditLogsFromDatabase_(galSs, body.limit || 100);
       return createJsonResponse_({ success: true, logs: logs });
     }
+
+    // ===== Admin: verify / suspend a player profile =====
+    if (action === "admin-player-verify" || action === "admin-player-suspend" || action === "verifyPlayer" || action === "suspendPlayer") {
+      var vpAuth = requireAuth_(body);
+      if (!isAdminAuth_(vpAuth)) return unauthorizedResponse_();
+      var vpTarget = body.PlayerID || body.playerId || body.player_id || body.userId;
+      var vpVerify = (action === "admin-player-verify" || action === "verifyPlayer");
+      return createJsonResponse_(setPlayerStatusInDatabase_(getDatabaseSpreadsheet_(), vpTarget, vpVerify ? "ACTIVE" : "SUSPENDED", vpAuth.email));
+    }
+
+    // ===== Official rules (public) =====
+    if (action === "getMatchRules" || action === "get-match-rules") {
+      var mrRules = getMatchRulesFromDatabase_(getDatabaseSpreadsheet_());
+      return createJsonResponse_({ success: true, rules: mrRules, data: { rules: mrRules } });
+    }
+
+    // ===== Live Google Docs: links (public) / rebuild now (admin) =====
+    if (action === "getLiveDocs" || action === "get-live-docs") {
+      var ldInfo = getLiveDocsInfo_();
+      return createJsonResponse_({ success: true, docs: ldInfo, data: ldInfo });
+    }
+    if (action === "syncLiveDocs" || action === "sync-live-docs") {
+      var sdAuth = requireAuth_(body);
+      if (!isAdminAuth_(sdAuth)) return unauthorizedResponse_();
+      var sdSs = getDatabaseSpreadsheet_();
+      var sdAppUrl = sanitizeAppUrl_(body.appUrl);
+      if (sdAppUrl && !PropertiesService.getScriptProperties().getProperty("APP_URL")) {
+        PropertiesService.getScriptProperties().setProperty("APP_URL", sdAppUrl);
+      }
+      var sdWhat = String(body.what || "all");
+      var sdErrors = [];
+      if (sdWhat === "all" || sdWhat === "rules") {
+        try { syncMasterRulesDocument_(sdSs); } catch (sdE1) { sdErrors.push("Rules doc: " + sdE1.message); }
+      }
+      if (sdWhat === "all" || sdWhat === "roster") {
+        try { syncLiveRosterDocument_(sdSs, true); } catch (sdE2) { sdErrors.push("Roster doc: " + sdE2.message); }
+      }
+      logAudit_(sdSs, sdAuth.uid, sdAuth.email, "LIVE_DOCS_SYNCED", "Document", "MASTER", { what: sdWhat, errors: sdErrors });
+      var sdInfo = getLiveDocsInfo_();
+      if (sdErrors.length) return createJsonResponse_({ success: false, message: sdErrors.join(" | "), docs: sdInfo, data: sdInfo });
+      return createJsonResponse_({ success: true, message: "Google Docs refreshed.", docs: sdInfo, data: sdInfo });
+    }
+
+    // ===== Invitations =====
+    if (action === "getInvite" || action === "get-invite") {
+      return createJsonResponse_(previewInvite_(getDatabaseSpreadsheet_(), body.code || params.code));
+    }
+    if (action === "createInvite" || action === "create-invite") {
+      var ciAuth = requireAuth_(body);
+      if (!ciAuth) return createJsonResponse_({ success: false, message: "Sign in to create invitations." });
+      return createJsonResponse_(createInviteInDatabase_(getDatabaseSpreadsheet_(), ciAuth, body));
+    }
+    if (action === "acceptInvite" || action === "accept-invite") {
+      var aiAuth = requireAuth_(body);
+      if (!aiAuth) return createJsonResponse_({ success: false, message: "Sign in to accept this invitation." });
+      return createJsonResponse_(acceptInviteInDatabase_(getDatabaseSpreadsheet_(), aiAuth, body.code));
+    }
+    if (action === "listInvites" || action === "list-invites") {
+      var liAuth = requireAuth_(body);
+      if (!liAuth) return createJsonResponse_({ success: false, message: "Authentication required." });
+      var liList = listInvitesFromDatabase_(getDatabaseSpreadsheet_(), liAuth, body.competitionId || "");
+      return createJsonResponse_({ success: true, invites: liList, data: { invites: liList } });
+    }
+    if (action === "revokeInvite" || action === "revoke-invite") {
+      var riAuth = requireAuth_(body);
+      if (!riAuth) return createJsonResponse_({ success: false, message: "Authentication required." });
+      return createJsonResponse_(revokeInviteInDatabase_(getDatabaseSpreadsheet_(), riAuth, body.inviteId || body.InviteID));
+    }
+
+    // ===== CHUKA ARENA: Hostel + Community =====
+    if (action === "createHostel" || action === "submitHostel") {
+      var chAuth = requireAuth_(body);
+      if (!chAuth) return createJsonResponse_({ success:false, message:"Sign in to submit a hostel." });
+      return createJsonResponse_(createHostelInDatabase_(getDatabaseSpreadsheet_(), chAuth, body));
+    }
+    if (action === "adminApproveHostel" || action === "approveHostel" || action === "adminRejectHostel" || action === "rejectHostel") {
+      var ahAuth = requireAuth_(body);
+      if (!isAdminAuth_(ahAuth)) return unauthorizedResponse_();
+      var newStatus = (action === "adminApproveHostel" || action === "approveHostel") ? "APPROVED" : "REJECTED";
+      return createJsonResponse_(setHostelModerationStatus_(getDatabaseSpreadsheet_(), ahAuth, body.hostelId || body.HostelID, newStatus, body.note || body.moderationNote || ""));
+    }
+    if (action === "getHostels" || action === "listHostels") {
+      return createJsonResponse_({ success:true, hostels:listHostelsFromDatabase_(getDatabaseSpreadsheet_(), body) });
+    }
+    if (action === "adminGetHostels" || action === "getPendingHostels") {
+      var phAuth = requireAuth_(body);
+      if (!isAdminAuth_(phAuth)) return unauthorizedResponse_();
+      return createJsonResponse_({ success:true, hostels:listHostelsFromDatabase_(getDatabaseSpreadsheet_(), { includePending:true }) });
+    }
+    if (action === "updateHostelAvailability") {
+      var haAuth = requireAuth_(body);
+      if (!haAuth) return createJsonResponse_({ success:false, message:"Sign in to update availability." });
+      return createJsonResponse_(updateHostelAvailabilityInDatabase_(getDatabaseSpreadsheet_(), haAuth, body));
+    }
+    if (action === "getHostelAvailability") {
+      return createJsonResponse_({ success:true, availability:getHostelAvailabilityFromDatabase_(getDatabaseSpreadsheet_(), body.hostelId || body.HostelID) });
+    }
+    if (action === "uploadHostelPhoto") {
+      var hpAuth = requireAuth_(body);
+      if (!hpAuth) return createJsonResponse_({ success:false, message:"Sign in to upload a hostel photo." });
+      return createJsonResponse_(uploadHostelPhotoInDatabase_(getDatabaseSpreadsheet_(), hpAuth, body));
+    }
+    if (action === "createCommunityRequest") {
+      var crAuth = requireAuth_(body);
+      if (!crAuth) return createJsonResponse_({ success:false, message:"Sign in to post a request." });
+      return createJsonResponse_(createCommunityRequestInDatabase_(getDatabaseSpreadsheet_(), crAuth, body));
+    }
+    if (action === "getCommunityRequests") {
+      return createJsonResponse_({ success:true, requests:getCommunityRequestsFromDatabase_(getDatabaseSpreadsheet_()) });
+    }
+    if (action === "acceptCommunityRequest") {
+      var arAuth = requireAuth_(body);
+      if (!arAuth) return createJsonResponse_({ success:false, message:"Sign in to accept a request." });
+      return createJsonResponse_(acceptCommunityRequestInDatabase_(getDatabaseSpreadsheet_(), arAuth, body.requestId || body.RequestID));
+    }
+    if (action === "createRoommatePost") {
+      var rmAuth = requireAuth_(body);
+      if (!rmAuth) return createJsonResponse_({ success:false, message:"Sign in to post a roommate listing." });
+      return createJsonResponse_(createRoommatePostInDatabase_(getDatabaseSpreadsheet_(), rmAuth, body));
+    }
+    if (action === "getRoommatePosts") {
+      return createJsonResponse_({ success:true, posts:getRoommatePostsFromDatabase_(getDatabaseSpreadsheet_()) });
+    }
+    if (action === "closeRoommatePost") {
+      var rmcAuth = requireAuth_(body);
+      if (!rmcAuth) return createJsonResponse_({ success:false, message:"Authentication required." });
+      return createJsonResponse_(setOwnRoommatePostStatus_(getDatabaseSpreadsheet_(), rmcAuth, body.postId || body.PostID, "MATCHED"));
+    }
+    if (action === "createHookupPost") {
+      var hkAuth = requireAuth_(body);
+      if (!hkAuth) return createJsonResponse_({ success:false, message:"Authentication required." });
+      return createJsonResponse_(createHookupPostInDatabase_(getDatabaseSpreadsheet_(), hkAuth, body));
+    }
+    if (action === "getHookupPosts") {
+      return createJsonResponse_({ success:true, posts:getHookupPostsFromDatabase_(getDatabaseSpreadsheet_()) });
+    }
+    if (action === "deleteHookupPost") {
+      var hkdAuth = requireAuth_(body);
+      if (!hkdAuth) return createJsonResponse_({ success:false, message:"Authentication required." });
+      return createJsonResponse_(deleteOwnHookupPost_(getDatabaseSpreadsheet_(), hkdAuth, body.postId || body.PostID));
+    }
+    if (action === "reportCommunityItem") {
+      var repAuth = requireAuth_(body);
+      if (!repAuth) return createJsonResponse_({ success:false, message:"Authentication required." });
+      return createJsonResponse_(createCommunityReport_(getDatabaseSpreadsheet_(), repAuth, body));
+    }
+    // ===== CHUKA ARENA V2: Hostel Program / Jobs / Trends / WhatsApp suggestions =====
+    if (action === 'getHostelProgramStatus') { var hps= requireAuth_(body); if(!hps)return createJsonResponse_({success:false,message:'Authentication required.'}); return createJsonResponse_(getHostelProgramStatus_(getDatabaseSpreadsheet_(),hps)); }
+    if (action === 'createHostelProgramPayment') { var hpp=requireAuth_(body); if(!hpp)return createJsonResponse_({success:false,message:'Authentication required.'}); return createJsonResponse_(createHostelProgramPayment_(getDatabaseSpreadsheet_(),hpp,body)); }
+    if (action === 'createJobGig') { var jga=requireAuth_(body); if(!jga)return createJsonResponse_({success:false,message:'Authentication required.'}); return createJsonResponse_(createJobGigInDatabase_(getDatabaseSpreadsheet_(),jga,body)); }
+    if (action === 'getJobsGigs') return createJsonResponse_({success:true,jobs:getJobsGigsFromDatabase_(getDatabaseSpreadsheet_())});
+    if (action === 'adminGetJobsGigs') { var jgauth=requireAuth_(body); if(!isAdminAuth_(jgauth))return unauthorizedResponse_(); return createJsonResponse_({success:true,jobs:adminGetJobsGigsFromDatabase_(getDatabaseSpreadsheet_())}); }
+    if (action === 'adminApproveJobGig' || action === 'adminRejectJobGig') { var jgauth2=requireAuth_(body); if(!isAdminAuth_(jgauth2))return unauthorizedResponse_(); return createJsonResponse_(setJobGigModeration_(getDatabaseSpreadsheet_(),jgauth2,body.jobId||body.JobID,action==='adminApproveJobGig'?'APPROVED':'REJECTED',body.note||'')); }
+    if (action === 'getTrends') return createJsonResponse_({success:true,trends:getTrendsFromDatabase_(getDatabaseSpreadsheet_())});
+    if (action === 'adminUploadTrend') { var ta=requireAuth_(body); if(!isAdminAuth_(ta))return unauthorizedResponse_(); return createJsonResponse_(uploadTrendInDatabase_(getDatabaseSpreadsheet_(),ta,body)); }
+    if (action === 'adminDeleteTrend') { var td=requireAuth_(body); if(!isAdminAuth_(td))return unauthorizedResponse_(); return createJsonResponse_(adminDeleteTrendInDatabase_(getDatabaseSpreadsheet_(),td,body.trendId||body.TrendID)); }
+    if (action === 'suggestWhatsAppGroup') { var wsa=requireAuth_(body); if(!wsa)return createJsonResponse_({success:false,message:'Authentication required.'}); return createJsonResponse_(submitWhatsAppSuggestionInDatabase_(getDatabaseSpreadsheet_(),wsa,body)); }
+    if (action === 'adminGetWhatsAppSuggestions') { var wsa2=requireAuth_(body); if(!isAdminAuth_(wsa2))return unauthorizedResponse_(); return createJsonResponse_({success:true,suggestions:getWhatsAppSuggestionsFromDatabase_(getDatabaseSpreadsheet_())}); }
+    if (action === 'adminReviewWhatsAppSuggestion') { var wsa3=requireAuth_(body); if(!isAdminAuth_(wsa3))return unauthorizedResponse_(); return createJsonResponse_(reviewWhatsAppSuggestionInDatabase_(getDatabaseSpreadsheet_(),wsa3,body.suggestionId||body.SuggestionID,body.approve===true,body.note||'')); }
 
     // Fallback for unrecognized POST actions
     Logger.log("[HTTP POST Warning] Unsupported action: '" + action + "'");
@@ -2179,102 +2327,6 @@ function getOrCreateCompetitionsParentFolder_() {
 }
 
 /**
- * Applies the "Official University Information Gazette" look to a Google Doc:
- * masthead, notice number, dateline, serif typography, ruled tables and a
- * signature/seal footer. Call right before doc.saveAndClose().
- */
-var APP_TIMEZONE_ = "Africa/Nairobi";
-
-function gazetteStyleDoc_(doc, docTitle, compName, compId, code) {
-  try {
-    var body = doc.getBody();
-    var year = new Date().getFullYear();
-    var suffix = String(compId || "XXX").replace(/[^A-Za-z0-9]/g, "").slice(-6).toUpperCase();
-    var notice = "CEG/" + year + "/" + suffix + "/" + code;
-    var dateStr = Utilities.formatDate(new Date(), APP_TIMEZONE_, "d MMMM yyyy");
-    var INK = "#16130D", GREEN = "#166534", PAPER_HEAD = "#ECE6D0";
-    var CENTER = DocumentApp.HorizontalAlignment.CENTER;
-
-    // 1. Restyle the existing content
-    body.setMarginLeft(54).setMarginRight(54).setMarginTop(46).setMarginBottom(46);
-    for (var i = 0; i < body.getNumChildren(); i++) {
-      var el = body.getChild(i);
-      var type = el.getType();
-      if (type === DocumentApp.ElementType.PARAGRAPH) {
-        var para = el.asParagraph();
-        var h = para.getHeading();
-        para.editAsText().setFontFamily("Georgia");
-        if (h === DocumentApp.ParagraphHeading.HEADING1) {
-          para.setAlignment(CENTER).setFontSize(16).setBold(true).setForegroundColor(INK);
-          para.editAsText().setText(para.getText().toUpperCase());
-        } else if (h === DocumentApp.ParagraphHeading.HEADING2) {
-          para.setFontSize(11).setBold(true).setForegroundColor(INK).setSpacingBefore(12);
-          para.editAsText().setText(para.getText().toUpperCase());
-        } else if (h === DocumentApp.ParagraphHeading.SUBTITLE) {
-          para.setAlignment(CENTER).setItalic(true).setFontSize(10).setForegroundColor("#4A4536");
-        } else {
-          para.setFontSize(10).setForegroundColor(INK);
-        }
-      } else if (type === DocumentApp.ElementType.TABLE) {
-        var table = el.asTable();
-        table.setBorderColor(INK).setBorderWidth(0.75);
-        table.editAsText().setFontSize(9).setFontFamily("Georgia").setForegroundColor(INK);
-        if (table.getNumRows() > 1) {
-          var head = table.getRow(0);
-          for (var c = 0; c < head.getNumCells(); c++) {
-            head.getCell(c).setBackgroundColor(PAPER_HEAD).editAsText().setBold(true);
-          }
-        }
-      } else if (type === DocumentApp.ElementType.LIST_ITEM) {
-        el.asListItem().setFontSize(10).setFontFamily("Georgia").setForegroundColor(INK);
-      }
-    }
-
-    // 2. Masthead, inserted at the top in reading order
-    var idx = 0;
-    body.insertParagraph(idx++, "CHUKA UNIVERSITY")
-      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
-      .setFontSize(9).setBold(true).setForegroundColor(GREEN).setFontFamily("Georgia").setSpacingAfter(0);
-    body.insertParagraph(idx++, "eFOOTBALL ESPORTS GAZETTE")
-      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
-      .setFontSize(24).setBold(true).setForegroundColor(INK).setFontFamily("Georgia").setSpacingBefore(0).setSpacingAfter(0);
-    body.insertParagraph(idx++, "Official Information of the Chuka eFootball Community")
-      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
-      .setFontSize(9).setItalic(true).setBold(false).setForegroundColor("#4A4536").setFontFamily("Georgia");
-    body.insertHorizontalRule(idx++);
-    body.insertParagraph(idx++, "Chuka, Kenya   |   " + dateStr + "   |   Gazette Notice No. " + notice)
-      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
-      .setFontSize(9).setBold(false).setItalic(false).setForegroundColor(INK).setFontFamily("Georgia");
-    body.insertHorizontalRule(idx++);
-    body.insertParagraph(idx++, String(docTitle).toUpperCase())
-      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
-      .setFontSize(13).setBold(true).setForegroundColor(INK).setFontFamily("Georgia").setSpacingBefore(8).setSpacingAfter(0);
-    body.insertParagraph(idx++, String(compName || ""))
-      .setHeading(DocumentApp.ParagraphHeading.NORMAL).setAlignment(CENTER)
-      .setFontSize(11).setItalic(true).setBold(false).setForegroundColor("#3B3626").setFontFamily("Georgia").setSpacingAfter(10);
-
-    // 3. Footer: signatures, seal and fine print
-    body.appendParagraph("").setSpacingBefore(18);
-    var sig = body.appendTable([[
-      "______________________\nEsports Coordinator\nChuka eFootball Community",
-      "[ OFFICIAL SEAL ]",
-      "______________________\nCompetition Administrator\nHelp Desk: Sidney Wafula (0180752220)"
-    ]]);
-    sig.setBorderWidth(0);
-    sig.editAsText().setFontSize(8).setFontFamily("Georgia").setForegroundColor(INK);
-    for (var sc = 0; sc < 3; sc++) {
-      sig.getCell(0, sc).getChild(0).asParagraph().setAlignment(CENTER);
-    }
-    sig.getCell(0, 1).editAsText().setBold(true).setForegroundColor(GREEN);
-    body.appendHorizontalRule();
-    body.appendParagraph("Notice " + notice + "  |  Issued " + dateStr + "  |  Fair Play Standard  |  Chuka eFootball")
-      .setAlignment(CENTER).setFontSize(7).setItalic(true).setForegroundColor("#6B654F").setFontFamily("Georgia");
-  } catch (gzErr) {
-    Logger.log("[Gazette Style Warning] " + gzErr.message);
-  }
-}
-
-/**
  * Creates dedicated Google Drive folder and official Google Docs for a competition.
  */
 function createCompetitionDriveFolderAndDocs_(comp) {
@@ -2349,11 +2401,10 @@ function createCompetitionDriveFolderAndDocs_(comp) {
     var rBody = rulesDoc.getBody();
     rBody.clear();
 
-    var titlePara = rBody.appendParagraph("CHUKA eFOOTBALL COMMUNITY");
-    titlePara.setHeading(DocumentApp.ParagraphHeading.HEADING1);
-    rBody.appendParagraph("OFFICIAL GAZETTE & COMPETITION REGULATIONS").setHeading(DocumentApp.ParagraphHeading.SUBTITLE);
-    rBody.appendParagraph("Document Reference: " + compId + " | Published: " + nowStr);
-    rBody.appendHorizontalRule();
+    setDocMargins_(rBody);
+    renderBrandHeader_(rBody, "Official Gazette & Competition Regulations");
+    rBody.appendParagraph("Document Reference: " + compId + " | Published: " + nowStr)
+      .setAttributes(docStyle_({ size: 8, color: "#555555", align: DocumentApp.HorizontalAlignment.CENTER, after: 6 }));
 
     rBody.appendParagraph("1. TOURNAMENT SPECIFICATIONS").setHeading(DocumentApp.ParagraphHeading.HEADING2);
     var specTable = [
@@ -2394,10 +2445,18 @@ function createCompetitionDriveFolderAndDocs_(comp) {
 
     rBody.appendParagraph("5. OFFICIAL COMMUNICATION CHANNELS").setHeading(DocumentApp.ParagraphHeading.HEADING2);
     rBody.appendParagraph("Official announcements and matchmaking desks are hosted on the Chuka eFootballHub PWA and verified administrator WhatsApp channels.");
-    rBody.appendHorizontalRule();
-    rBody.appendParagraph("Issued by Chuka eFootball League Tournament Directorate").setItalic(true);
-
-    gazetteStyleDoc_(rulesDoc, "Official Competition Rules & Regulations", compName, compId, "RR");
+    renderSectionTitle_(rBody, "Official Match Rules");
+    try {
+      var compRulesList = getMatchRulesFromDatabase_(getDatabaseSpreadsheet_());
+      renderRulesTables_(rBody, compRulesList, isLeague ? "League" : "Knockout");
+    } catch (rulesErr) {
+      Logger.log("[Doc Warning] Could not embed official rules: " + rulesErr.message);
+    }
+    renderRulesNote_(rBody);
+    rBody.appendParagraph("Issued by Chuka eFootball League Tournament Directorate")
+      .setAttributes(docStyle_({ size: 8, italic: true, color: "#444444", align: DocumentApp.HorizontalAlignment.CENTER, before: 6 }));
+    renderDocFooter_(rBody);
+    finalizeDoc_(rBody);
 
     rulesDoc.saveAndClose();
     var rRes = moveAndShareDoc_(rulesDoc);
@@ -2427,8 +2486,6 @@ function createCompetitionDriveFolderAndDocs_(comp) {
     ];
     regBody.appendTable(regTable);
     regBody.appendParagraph("(Roster will populate as player payments are verified by administration.)").setItalic(true);
-
-    gazetteStyleDoc_(regDoc, "Register of Entrants", compName, compId, "RE");
 
     regDoc.saveAndClose();
     var regRes = moveAndShareDoc_(regDoc);
@@ -2467,8 +2524,6 @@ function createCompetitionDriveFolderAndDocs_(comp) {
       ];
       brBody.appendTable(roundsTable);
 
-      gazetteStyleDoc_(brDoc, "Knockout Bracket Notice", compName, compId, "KB");
-
       brDoc.saveAndClose();
       var brRes = moveAndShareDoc_(brDoc);
       createdDocs.bracketDocId = brRes.id;
@@ -2496,9 +2551,7 @@ function createCompetitionDriveFolderAndDocs_(comp) {
         ["Fixture ID", "Round", "Home Player", "Away Player", "Score", "Status"]
       ];
       fBody.appendTable(fTable);
-      fBody.appendParagraph("Fixtures are published here matchday by matchday once the league starts. Win = 3 points, Draw = 1 point, Loss = 0 points.").setItalic(true);
-
-      gazetteStyleDoc_(fixDoc, "League Fixtures Notice", compName, compId, "LF");
+      fBody.appendParagraph("(Fixtures will appear here as each matchday is generated.)").setItalic(true);
 
       fixDoc.saveAndClose();
       var fRes = moveAndShareDoc_(fixDoc);
@@ -2528,8 +2581,6 @@ function createCompetitionDriveFolderAndDocs_(comp) {
       ];
       sBody.appendTable(sTable);
       sBody.appendParagraph("(Standings table will update live as match results are confirmed.)").setItalic(true);
-
-      gazetteStyleDoc_(stdDoc, "Official League Standings", compName, compId, "LS");
 
       stdDoc.saveAndClose();
       var sRes = moveAndShareDoc_(stdDoc);
@@ -2561,8 +2612,6 @@ function createCompetitionDriveFolderAndDocs_(comp) {
     ];
     finBody.appendTable(finSummaryTable);
     finBody.appendParagraph("(Official final results will be archived here upon tournament completion.)").setItalic(true);
-
-    gazetteStyleDoc_(finDoc, "Final Results & Awards Notice", compName, compId, "FR");
 
     finDoc.saveAndClose();
     var finRes = moveAndShareDoc_(finDoc);
@@ -2615,9 +2664,9 @@ function syncRegisteredPlayersDocument_(spreadsheet, compId) {
       ["Remaining Capacity", String(Math.max(0, comp.MaxPlayers - approvedRegs.length))]
     ]);
 
-    body.appendParagraph("PART A - VERIFIED ENTRANTS").setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    body.appendParagraph("APPROVED PLAYERS").setHeading(DocumentApp.ParagraphHeading.HEADING2);
     if (approvedRegs.length === 0) {
-      body.appendParagraph("No entrant has been verified yet. Names appear here once the administration confirms payment.").setItalic(true);
+      body.appendParagraph("No player registrations have been approved yet.");
     } else {
       var tableRows = [["#", "Player Name", "eFootball Gamer Tag", "Registration Status", "Payment Status"]];
       for (var a = 0; a < approvedRegs.length; a++) {
@@ -2633,20 +2682,6 @@ function syncRegisteredPlayersDocument_(spreadsheet, compId) {
       body.appendTable(tableRows);
     }
 
-    body.appendParagraph("PART B - UNVERIFIED ENTRANTS (AWAITING PAYMENT APPROVAL)").setHeading(DocumentApp.ParagraphHeading.HEADING2);
-    if (pendingRegs.length === 0) {
-      body.appendParagraph("There are no entries awaiting verification.").setItalic(true);
-    } else {
-      var pendRows = [["#", "eFootball Gamer Tag", "Date Registered", "Status"]];
-      for (var pq = 0; pq < pendingRegs.length; pq++) {
-        pendRows.push([String(pq + 1), pendingRegs[pq].eFootballUsername || "-", String(pendingRegs[pq].RegisteredAt || "-"), "Unverified"]);
-      }
-      body.appendTable(pendRows);
-    }
-
-    body.appendParagraph("An unverified entrant is not yet in the draw. Verification follows confirmation of payment.").setItalic(true);
-
-    gazetteStyleDoc_(doc, "Register of Entrants", comp.Name, compId, "RE");
     doc.saveAndClose();
     Logger.log("[Doc Sync] Updated Registered Players document for " + compId);
   } catch (err) {
@@ -2676,12 +2711,7 @@ function syncKnockoutBracketDocument_(spreadsheet, compId) {
 
     var fixtures = getFixturesFromDatabase_(spreadsheet, compId);
     if (fixtures.length === 0) {
-      body.appendParagraph("The bracket has not been drawn yet. HOW IT WILL WORK:").setBold(true);
-      body.appendListItem("Players register and pay the entry fee to the official Till number.");
-      body.appendListItem("The administration verifies each payment. Only verified players enter the draw.");
-      body.appendListItem("When the minimum number of players is verified, opponents are drawn at random and Round 1 is published here.");
-      body.appendListItem("Single elimination: the winner advances, the loser is out. Extra time and penalties settle level games.");
-      body.appendListItem("Both players submit the final-score screenshot before each round deadline. The last player standing is champion.");
+      body.appendParagraph("Bracket will be generated once 1,024 approved players are registered.");
     } else {
       var rounds = {};
       for (var f = 0; f < fixtures.length; f++) {
@@ -2711,7 +2741,6 @@ function syncKnockoutBracketDocument_(spreadsheet, compId) {
       }
     }
 
-    gazetteStyleDoc_(doc, "Knockout Bracket Notice", comp.Name, compId, "KB");
     doc.saveAndClose();
     Logger.log("[Doc Sync] Updated Knockout Bracket document for " + compId);
   } catch (err) {
@@ -2741,11 +2770,7 @@ function syncLeagueFixturesDocument_(spreadsheet, compId) {
 
     var fixtures = getFixturesFromDatabase_(spreadsheet, compId);
     if (fixtures.length === 0) {
-      body.appendParagraph("Fixtures have not been published yet. HOW IT WILL WORK:").setBold(true);
-      body.appendListItem("Verified players are placed in one league table.");
-      body.appendListItem("The administration generates the fixture list and publishes it in matchdays.");
-      body.appendListItem("Each fixture is played before its matchday deadline and reported with a screenshot.");
-      body.appendListItem("Win = 3 points, Draw = 1 point, Loss = 0 points. Top of the table at the close wins the prize.");
+      body.appendParagraph("Fixtures will be generated once the season commences.");
     } else {
       var rounds = {};
       for (var f = 0; f < fixtures.length; f++) {
@@ -2774,7 +2799,6 @@ function syncLeagueFixturesDocument_(spreadsheet, compId) {
       }
     }
 
-    gazetteStyleDoc_(doc, "League Fixtures Notice", comp.Name, compId, "LF");
     doc.saveAndClose();
     Logger.log("[Doc Sync] Updated League Fixtures document for " + compId);
   } catch (err) {
@@ -2821,7 +2845,6 @@ function syncLeagueStandingsDocument_(spreadsheet, compId) {
     }
     body.appendTable(sRows);
 
-    gazetteStyleDoc_(doc, "Official League Standings", comp.Name, compId, "LS");
     doc.saveAndClose();
     Logger.log("[Doc Sync] Updated League Standings document for " + compId);
   } catch (err) {
@@ -2858,7 +2881,6 @@ function syncFinalResultsDocument_(spreadsheet, compId, winnerId, winnerName, pr
       ["Completion Date", new Date().toISOString()]
     ]);
 
-    gazetteStyleDoc_(doc, "Final Results & Awards Notice", compId, compId, "FR");
     doc.saveAndClose();
     Logger.log("[Doc Sync] Updated Final Results document for " + compId);
   } catch (err) {
@@ -3343,6 +3365,7 @@ function getRegistrationsFromDatabase_(spreadsheet, compId) {
       RegistrationID: String(reg.registration_id || ""),
       CompetitionID: String(reg.competition_id || ""),
       PlayerID: String(reg.player_id || ""),
+      PlayerName: String(reg.player_name || ""),
       eFootballUsername: String(reg.efootball_username || reg.player_name || ""),
       Status: String(reg.status || "PENDING"),
       PaymentStatus: String(reg.payment_status || "PENDING"),
@@ -3477,6 +3500,7 @@ function registerPlayerInDatabase_(spreadsheet, authUser, compId, efootballUsern
     SpreadsheetApp.flush();
     logAudit_(spreadsheet, uid, email, "REGISTRATION_SUBMITTED", "Registration", regId, { competitionId: compId, paymentId: payId, amount: compFee, till: "6817863" });
     try { lock.releaseLock(); } catch(e) {}
+    queueDocsSync_("roster");
 
     return {
       success: true,
@@ -3503,6 +3527,10 @@ function registerPlayerInDatabase_(spreadsheet, authUser, compId, efootballUsern
  * Subordinate to payment confirmation: Cannot approve a registration whose payment is not confirmed.
  */
 function updateRegistrationStatusInDatabase_(spreadsheet, regId, status, verifiedBy) {
+  status = String(status || "").toUpperCase();
+  if (status !== "APPROVED" && status !== "REJECTED") {
+    return { success: false, message: "Invalid registration status: " + status };
+  }
   var sheet = getOrCreateSheet_(spreadsheet, REGISTRATIONS_SHEET_NAME, REGISTRATIONS_HEADERS);
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
@@ -3511,38 +3539,71 @@ function updateRegistrationStatusInDatabase_(spreadsheet, regId, status, verifie
   var rawValues = sheet.getRange(1, 1, lastRow, lastCol).getValues();
   var headers = rawValues[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
   var idCol = headers.indexOf("registration_id");
+  var compCol = headers.indexOf("competition_id");
   var statusCol = headers.indexOf("status");
   var payStatusCol = headers.indexOf("payment_status");
   var payIdCol = headers.indexOf("payment_id");
   var vAtCol = headers.indexOf("verified_at");
   var vByCol = headers.indexOf("verified_by");
 
+  var rowNum = -1, payId = "", compId = "";
   for (var r = 1; r < rawValues.length; r++) {
     if (String(rawValues[r][idCol] || "").trim() === String(regId).trim()) {
-      var rowNum = r + 1;
-      var curPayStatus = payStatusCol !== -1 ? String(rawValues[r][payStatusCol] || "").trim().toUpperCase() : "PENDING";
-      var associatedPayId = payIdCol !== -1 ? String(rawValues[r][payIdCol] || "").trim() : "";
-
-      if (status === "APPROVED" && curPayStatus !== "CONFIRMED" && curPayStatus !== "PAID") {
-        return {
-          success: false,
-          message: "Cannot approve registration: Associated payment is not confirmed. Approvals must be processed by confirming payment via the Payments tab."
-        };
-      }
-
-      if (statusCol !== -1) sheet.getRange(rowNum, statusCol + 1).setValue(status);
-      if (status === "REJECTED" && payStatusCol !== -1) {
-        sheet.getRange(rowNum, payStatusCol + 1).setValue("REJECTED");
-      }
-      if (vAtCol !== -1) sheet.getRange(rowNum, vAtCol + 1).setValue(new Date().toISOString());
-      if (vByCol !== -1) sheet.getRange(rowNum, vByCol + 1).setValue(verifiedBy);
-      SpreadsheetApp.flush();
-
-      logAudit_(spreadsheet, verifiedBy, verifiedBy, "REGISTRATION_STATUS_UPDATED", "Registration", regId, { status: status, paymentId: associatedPayId });
-      return { success: true, message: "Registration updated successfully." };
+      rowNum = r + 1;
+      payId = payIdCol !== -1 ? String(rawValues[r][payIdCol] || "").trim() : "";
+      compId = compCol !== -1 ? String(rawValues[r][compCol] || "").trim() : "";
+      break;
     }
   }
-  return { success: false, message: "Registration " + regId + " not found." };
+  if (rowNum === -1) return { success: false, message: "Registration " + regId + " not found." };
+
+  var okMessage = status === "APPROVED"
+    ? "Player verified - registration approved and payment confirmed."
+    : "Registration rejected.";
+
+  // Preferred path: drive the linked payment so Payments + Registrations stay consistent.
+  if (payId) {
+    var paySheet = getOrCreateSheet_(spreadsheet, PAYMENTS_SHEET_NAME, PAYMENTS_HEADERS);
+    var payLast = paySheet.getLastRow();
+    var payExists = false;
+    if (payLast > 1) {
+      var payRaw = paySheet.getRange(1, 1, payLast, paySheet.getLastColumn()).getValues();
+      var payIdx = payRaw[0].map(function(h) { return String(h || "").trim().toLowerCase(); }).indexOf("payment_id");
+      for (var p = 1; p < payRaw.length; p++) {
+        if (payIdx !== -1 && String(payRaw[p][payIdx] || "").trim() === payId) { payExists = true; break; }
+      }
+    }
+    if (payExists) {
+      var payRes = updatePaymentStatusInDatabase_(spreadsheet, payId, status === "APPROVED" ? "CONFIRMED" : "REJECTED", verifiedBy);
+      if (payRes && payRes.success) {
+        queueDocsSync_("roster");
+        return { success: true, message: okMessage };
+      }
+      return payRes;
+    }
+  }
+
+  // Fallback: registration has no payment row - update the registration directly (with capacity check).
+  if (status === "APPROVED" && compId) {
+    var comp = findCompetitionById_(spreadsheet, compId);
+    if (comp) {
+      var isKO = String(comp.CompetitionType).toUpperCase() === "KNOCKOUT";
+      var cap = isKO ? 1024 : 2048;
+      var curStatus = statusCol !== -1 ? String(rawValues[rowNum - 1][statusCol] || "").toUpperCase() : "";
+      if (curStatus !== "APPROVED" && Number(comp.ApprovedCount || 0) >= cap) {
+        return { success: false, message: "Cannot approve: tournament has reached maximum capacity of " + cap.toLocaleString() + " approved players." };
+      }
+    }
+  }
+  if (statusCol !== -1) sheet.getRange(rowNum, statusCol + 1).setValue(status);
+  if (payStatusCol !== -1) sheet.getRange(rowNum, payStatusCol + 1).setValue(status === "APPROVED" ? "CONFIRMED" : "REJECTED");
+  if (vAtCol !== -1) sheet.getRange(rowNum, vAtCol + 1).setValue(new Date().toISOString());
+  if (vByCol !== -1) sheet.getRange(rowNum, vByCol + 1).setValue(verifiedBy);
+  SpreadsheetApp.flush();
+  logAudit_(spreadsheet, verifiedBy, verifiedBy, "REGISTRATION_STATUS_UPDATED", "Registration", regId, { status: status, paymentId: payId });
+  try { syncRegisteredPlayersDocument_(spreadsheet, compId); } catch (e) {}
+  queueDocsSync_("roster");
+  return { success: true, message: okMessage };
 }
 
 /**
@@ -3716,8 +3777,10 @@ function updatePaymentStatusInDatabase_(spreadsheet, payId, status, verifiedBy) 
       syncRegisteredPlayersDocument_(spreadsheet, targetCompId);
     }
 
+    if (String(targetCompId).toUpperCase() === 'HOSTEL_PROGRAM' && typeof activateHostelProgramPayment_ === 'function') { activateHostelProgramPayment_(spreadsheet, payId, canonicalPayStatus); }
     logAudit_(spreadsheet, verifiedBy, verifiedBy, "PAYMENT_STATUS_UPDATED", "Payment", payId, { status: canonicalPayStatus, competitionId: targetCompId });
     try { lock.releaseLock(); } catch(e) {}
+    queueDocsSync_("roster");
 
     return {
       success: true,
@@ -3960,7 +4023,8 @@ function getAdminOverviewFromDatabase_(spreadsheet) {
 /**
  * Returns all players from Users sheet with search filtering.
  */
-function getAllPlayersFromDatabase_(spreadsheet, searchQuery) {
+function getAllPlayersFromDatabase_(spreadsheet, searchQuery, filters) {
+  filters = filters || {};
   var sheet = getOrCreateUsersSheet_(spreadsheet);
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
@@ -3970,6 +4034,8 @@ function getAllPlayersFromDatabase_(spreadsheet, searchQuery) {
   var headers = rawValues[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
   var cols = getUsersColumnIndices_(headers);
   var query = String(searchQuery || "").trim().toLowerCase();
+  var wantStatus = String(filters.status || "").trim().toUpperCase();
+  var wantVerified = String(filters.verified || "").trim().toLowerCase();
   var players = [];
 
   for (var r = 1; r < rawValues.length; r++) {
@@ -3980,20 +4046,11 @@ function getAllPlayersFromDatabase_(spreadsheet, searchQuery) {
       var matchEmail = profile.email.toLowerCase().indexOf(query) !== -1;
       if (!matchName && !matchEmail) continue;
     }
-    players.push({
-      PlayerID: profile.user_id || profile.email,
-      GoogleUID: profile.user_id,
-      DisplayName: profile.display_name,
-      PhotoURL: profile.photo_url,
-      ClassID: profile.class_id,
-      Phone: profile.phone,
-      WhatsAppNumber: profile.whatsapp,
-      Status: profile.status,
-      Role: profile.role,
-      CreatedAt: profile.created_at,
-      UpdatedAt: profile.updated_at,
-      SquadImageURL: profile.squad_image_url
-    });
+    var obj = playerProfileToAdminObject_(profile);
+    if (wantStatus && wantStatus !== "ALL" && String(obj.Status).toUpperCase() !== wantStatus) continue;
+    if ((wantVerified === "true" || wantVerified === "verified") && !obj.Verified) continue;
+    if ((wantVerified === "false" || wantVerified === "unverified") && obj.Verified) continue;
+    players.push(obj);
   }
   return players;
 }
@@ -5030,3 +5087,1373 @@ function testBackendSetup() {
     return false;
   }
 }
+
+/**
+ * =========================================================================
+ * AUTOMATION MODULE
+ *  - Official Match Rules Google Doc (branded, logos, tables) from MatchRules sheet
+ *  - LIVE Registered Players Google Doc (per Knockout / per League, by name)
+ *  - Admin player verification (verify / suspend)
+ *  - Invitations to Knockouts and Leagues (link + email)
+ *  - Auto-refresh triggers (run setupAutomation() ONCE from the editor)
+ * =========================================================================
+ */
+
+var CHUKA_CREST_URL = "https://aicenter.chuka.ac.ke/wp-content/uploads/2026/03/chuka-uni-logo-HD-1-2-Photoroom.png";
+var EFOOTBALL_LOGO_URL = "https://images.seeklogo.com/logo-png/45/1/efootball-logo-png_seeklogo-451310.png";
+var HELP_DESK_NAME = "Sidney Wafula";
+var HELP_DESK_PHONE = "0180752220";
+var DOC_FONT = "Georgia";
+
+var MATCH_RULES_SHEET_NAME = "MatchRules";
+var MATCH_RULES_HEADERS = ["rule_id", "competition", "rule_title", "rule_content", "active", "updated_at"];
+var DEFAULT_MATCH_RULES = [
+  ["RULE-KO-01", "Knockout", "Tournament Format & Brackets", "Single elimination knockout brackets. The winner of each match advances to the subsequent round while the loser is eliminated. All brackets are synchronized via Google Sheets."],
+  ["RULE-KO-02", "Knockout", "Match Scheduling & Deadlines", "Players must schedule and complete their designated knockout fixture before the published round deadline. Failure to communicate may result in a forfeit walkover."],
+  ["RULE-KO-03", "Knockout", "Extra Time & Penalties", "If scores are level at 90 minutes in knockout fixtures, extra time and penalty shootouts must be played immediately to determine the advancing player."],
+  ["RULE-KO-04", "Knockout", "Screenshot & Result Verification", "Both players must take a clear end-game screenshot displaying final score, player gamertags, and match statistics. The winner submits the result; the opponent must confirm."],
+  ["RULE-LG-01", "League", "League Format & Points System", "Round-robin league format. Three points for a win, one point for a draw, and zero points for a loss. Goal difference is used as the primary tiebreaker."],
+  ["RULE-LG-02", "League", "Match Scheduling & Deadlines", "All league fixtures must be completed within the designated matchweek window. Players are responsible for coordinating and reporting results before the deadline."],
+  ["RULE-LG-03", "League", "Draws & Points Allocation", "League matches can end in a draw. Both players receive one point each. No extra time or penalties are played in league fixtures."],
+  ["RULE-LG-04", "League", "Screenshot & Result Verification", "Both players must take a clear end-game screenshot displaying final score, player gamertags, and match statistics. The winner submits the result; the opponent must confirm."]
+];
+
+var INVITES_SHEET_NAME = "Invites";
+var INVITES_HEADERS = [
+  "invite_id", "code", "competition_id", "competition_name", "competition_type",
+  "invite_type", "invited_email", "invited_by_uid", "invited_by_name", "status",
+  "uses", "max_uses", "created_at", "expires_at", "last_used_at", "accepted_by"
+];
+
+/* ---------- small auth helpers ---------- */
+function requireAuth_(body) {
+  var t = (body && typeof body.idToken === "string") ? body.idToken.trim() : "";
+  if (!t) return null;
+  var a = verifyFirebaseIdToken_(t);
+  return (a && a.valid) ? a : null;
+}
+function isAdminAuth_(a) {
+  return !!(a && (a.isAdmin || isAuthorizedAdminEmail_(a.email)));
+}
+function unauthorizedResponse_() {
+  return createJsonResponse_({ success: false, message: "Unauthorized: Administrator privileges required." });
+}
+
+/* =========================================================================
+ * MATCH RULES (sheet = source of truth)
+ * ========================================================================= */
+function getOrCreateMatchRulesSheet_(ss) {
+  var sheet = getOrCreateSheet_(ss, MATCH_RULES_SHEET_NAME, MATCH_RULES_HEADERS);
+  if (sheet.getLastRow() <= 1) {
+    var nowIso = new Date().toISOString();
+    for (var i = 0; i < DEFAULT_MATCH_RULES.length; i++) {
+      var r = DEFAULT_MATCH_RULES[i];
+      sheet.appendRow([r[0], r[1], r[2], r[3], true, nowIso]);
+    }
+    try { sheet.setColumnWidth(3, 260); sheet.setColumnWidth(4, 620); } catch (e) {}
+    SpreadsheetApp.flush();
+  }
+  return sheet;
+}
+
+function getMatchRulesFromDatabase_(ss) {
+  var sheet = getOrCreateMatchRulesSheet_(ss);
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
+  var raw = sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).getValues();
+  var h = raw[0].map(function(x) { return String(x || "").trim().toLowerCase(); });
+  var ix = function(n) { return h.indexOf(n); };
+  var out = [];
+  for (var r = 1; r < raw.length; r++) {
+    var row = raw[r];
+    var title = ix("rule_title") !== -1 ? String(row[ix("rule_title")] || "").trim() : "";
+    var content = ix("rule_content") !== -1 ? String(row[ix("rule_content")] || "").trim() : "";
+    if (!title && !content) continue;
+    var activeRaw = ix("active") !== -1 ? row[ix("active")] : true;
+    var active = !(activeRaw === false || String(activeRaw).trim().toUpperCase() === "FALSE" || String(activeRaw).trim().toUpperCase() === "NO");
+    var comp = ix("competition") !== -1 ? String(row[ix("competition")] || "").trim() : "";
+    var compNorm = comp.toLowerCase().indexOf("league") !== -1 ? "League" : "Knockout";
+    out.push({
+      RuleID: ix("rule_id") !== -1 ? String(row[ix("rule_id")] || "").trim() : "",
+      Competition: compNorm,
+      RuleTitle: title,
+      RuleContent: content,
+      Active: active,
+      UpdatedAt: ix("updated_at") !== -1 ? String(row[ix("updated_at")] || "") : ""
+    });
+  }
+  return out;
+}
+
+/* =========================================================================
+ * GOOGLE DOC RENDERING HELPERS (mirror the web "official document" style)
+ * ========================================================================= */
+function docStyle_(o) {
+  var A = DocumentApp.Attribute;
+  var s = {};
+  if (o.bold !== undefined) s[A.BOLD] = o.bold;
+  if (o.italic !== undefined) s[A.ITALIC] = o.italic;
+  if (o.size) s[A.FONT_SIZE] = o.size;
+  if (o.font) s[A.FONT_FAMILY] = o.font;
+  if (o.color) s[A.FOREGROUND_COLOR] = o.color;
+  if (o.bg) s[A.BACKGROUND_COLOR] = o.bg;
+  if (o.align) s[A.HORIZONTAL_ALIGNMENT] = o.align;
+  if (o.before !== undefined) s[A.SPACING_BEFORE] = o.before;
+  if (o.after !== undefined) s[A.SPACING_AFTER] = o.after;
+  return s;
+}
+
+function fetchImageBlob_(urls) {
+  for (var i = 0; i < urls.length; i++) {
+    var u = urls[i];
+    if (!u) continue;
+    try {
+      var res = UrlFetchApp.fetch(u, {
+        muteHttpExceptions: true,
+        followRedirects: true,
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; ChukaEFootballHub/1.0)" }
+      });
+      if (res.getResponseCode() === 200) {
+        var blob = res.getBlob();
+        var ct = String(blob.getContentType() || "").toLowerCase();
+        if (ct.indexOf("image/") === 0 && ct.indexOf("svg") === -1) return blob;
+      }
+    } catch (e) {
+      Logger.log("[Image Fetch] " + u + " -> " + e.message);
+    }
+  }
+  return null;
+}
+
+function getAppAssetUrl_(file) {
+  var base = PropertiesService.getScriptProperties().getProperty("APP_URL") || "";
+  return base ? base.replace(/\/+$/, "") + "/" + file : "";
+}
+
+function setDocMargins_(body) {
+  try {
+    body.setMarginTop(40);
+    body.setMarginBottom(40);
+    body.setMarginLeft(56);
+    body.setMarginRight(56);
+  } catch (e) {}
+}
+
+function placeLogo_(cell, blob, align, height) {
+  var p = cell.getChild(0).asParagraph();
+  p.setAlignment(align);
+  p.setSpacingAfter(0);
+  if (!blob) return;
+  try {
+    var img = p.appendInlineImage(blob);
+    var w = img.getWidth(), h = img.getHeight();
+    if (w > 0 && h > 0) {
+      img.setHeight(height).setWidth(Math.round(w * height / h));
+    }
+  } catch (e) {
+    Logger.log("[Logo] " + e.message);
+  }
+}
+
+/** Header: crest (left) | CHUKA eFOOTBALL + subtitle (center) | eFootball logo (right) */
+function renderBrandHeader_(body, subtitle) {
+  var crest = fetchImageBlob_([CHUKA_CREST_URL, getAppAssetUrl_("chuka-crest.png")]);
+  var logo = fetchImageBlob_([EFOOTBALL_LOGO_URL, getAppAssetUrl_("efootball-logo.png")]);
+
+  var t = body.appendTable([["", "", ""]]);
+  t.setBorderWidth(0);
+  t.setColumnWidth(0, 90);
+  t.setColumnWidth(1, 270);
+  t.setColumnWidth(2, 90);
+  var left = t.getCell(0, 0), mid = t.getCell(0, 1), right = t.getCell(0, 2);
+  var VA = DocumentApp.VerticalAlignment.CENTER;
+  left.setVerticalAlignment(VA); mid.setVerticalAlignment(VA); right.setVerticalAlignment(VA);
+
+  placeLogo_(left, crest, DocumentApp.HorizontalAlignment.LEFT, 50);
+  placeLogo_(right, logo, DocumentApp.HorizontalAlignment.RIGHT, 40);
+
+  var title = mid.getChild(0).asParagraph();
+  title.setText("CHUKA eFOOTBALL");
+  title.setAttributes(docStyle_({ bold: true, size: 22, color: "#000000", align: DocumentApp.HorizontalAlignment.CENTER, after: 0, before: 0 }));
+  var sub = mid.appendParagraph(String(subtitle || "Official University eFootball Esports Hub").toUpperCase());
+  sub.setAttributes(docStyle_({ bold: false, size: 8, color: "#333333", align: DocumentApp.HorizontalAlignment.CENTER, after: 0, before: 2 }));
+
+  body.appendHorizontalRule();
+  var pw = body.appendParagraph("Powered by Google Sheets + Apps Script");
+  pw.setAttributes(docStyle_({ bold: false, italic: false, size: 8, color: "#555555", align: DocumentApp.HorizontalAlignment.CENTER, after: 8, before: 2 }));
+}
+
+function renderSectionTitle_(body, text) {
+  var p = body.appendParagraph(String(text).toUpperCase());
+  p.setAttributes(docStyle_({ bold: true, size: 15, color: "#000000", align: DocumentApp.HorizontalAlignment.CENTER, before: 6, after: 2 }));
+  body.appendHorizontalRule();
+}
+
+function renderSubsectionTitle_(body, text) {
+  var p = body.appendParagraph(String(text).toUpperCase());
+  p.setAttributes(docStyle_({ bold: true, size: 11, color: "#222222", align: DocumentApp.HorizontalAlignment.LEFT, before: 12, after: 4 }));
+}
+
+/** Grey-header bordered table like the website's .doc-table */
+function styleDocTable_(table, colWidths, dense) {
+  table.setBorderColor("#aaaaaa");
+  table.setBorderWidth(0.75);
+  var body = {};
+  body[DocumentApp.Attribute.FONT_SIZE] = 9;
+  body[DocumentApp.Attribute.FONT_FAMILY] = DOC_FONT;
+  body[DocumentApp.Attribute.FOREGROUND_COLOR] = "#111111";
+  try { table.setAttributes(body); } catch (e) {}
+  if (colWidths) {
+    for (var c = 0; c < colWidths.length; c++) {
+      try { table.setColumnWidth(c, colWidths[c]); } catch (e) {}
+    }
+  }
+  var hdr = table.getRow(0);
+  for (var i = 0; i < hdr.getNumCells(); i++) {
+    var cell = hdr.getCell(i);
+    cell.setBackgroundColor("#f2f2f2");
+    cell.setAttributes(docStyle_({ bold: true, size: 8, color: "#000000", font: DOC_FONT }));
+  }
+  if (!dense) {
+    for (var r = 1; r < table.getNumRows(); r++) {
+      var row = table.getRow(r);
+      for (var k = 0; k < Math.min(2, row.getNumCells()); k++) {
+        row.getCell(k).setAttributes(docStyle_({ bold: true, size: 9, color: "#222222", font: DOC_FONT }));
+      }
+    }
+  }
+}
+
+function renderRulesTables_(body, rules, typeFilter) {
+  var sets = [
+    { key: "Knockout", label: "\uD83C\uDFC6 Knockout Rules", prefix: "RULE-KO-0" },
+    { key: "League", label: "\uD83E\uDD47 League Rules", prefix: "RULE-LG-0" }
+  ];
+  for (var s = 0; s < sets.length; s++) {
+    var set = sets[s];
+    if (typeFilter && typeFilter !== set.key) continue;
+    var list = [];
+    for (var i = 0; i < rules.length; i++) {
+      if (rules[i].Competition === set.key && rules[i].Active !== false) list.push(rules[i]);
+    }
+    if (list.length === 0) {
+      for (var d = 0; d < DEFAULT_MATCH_RULES.length; d++) {
+        if (DEFAULT_MATCH_RULES[d][1] === set.key) {
+          list.push({ RuleID: DEFAULT_MATCH_RULES[d][0], RuleTitle: DEFAULT_MATCH_RULES[d][2], RuleContent: DEFAULT_MATCH_RULES[d][3] });
+        }
+      }
+    }
+    renderSubsectionTitle_(body, set.label);
+    var rows = [["Rule ID", "Title", "Description"]];
+    for (var j = 0; j < list.length; j++) {
+      rows.push([list[j].RuleID || (set.prefix + (j + 1)), list[j].RuleTitle, list[j].RuleContent]);
+    }
+    var tbl = body.appendTable(rows);
+    styleDocTable_(tbl, [72, 128, 250], false);
+  }
+}
+
+function renderRulesNote_(body) {
+  var t = body.appendTable([["Google Sheets Live Rules: These regulations are linked to the MatchRules sheet. Updates made by tournament administrators in Google Sheets will automatically reflect in this document."]]);
+  t.setBorderColor("#888888");
+  t.setBorderWidth(0.75);
+  var cell = t.getCell(0, 0);
+  cell.setBackgroundColor("#f9f9f9");
+  var p = cell.getChild(0).asParagraph();
+  p.setAttributes(docStyle_({ size: 8, color: "#444444", bold: false, font: DOC_FONT, before: 2, after: 2 }));
+  try { p.editAsText().setBold(0, 24, true).setForegroundColor(0, 24, "#000000"); } catch (e) {}
+  body.appendParagraph("").setAttributes(docStyle_({ size: 4, after: 0, before: 0 }));
+}
+
+function renderDocFooter_(body) {
+  body.appendHorizontalRule();
+  var t = body.appendTable([["Help Desk: " + HELP_DESK_NAME + " (" + HELP_DESK_PHONE + ")", "Fair Play Standard \u2022 Chuka eFootball"]]);
+  t.setBorderWidth(0);
+  t.setColumnWidth(0, 250);
+  t.setColumnWidth(1, 200);
+  var l = t.getCell(0, 0).getChild(0).asParagraph();
+  l.setAttributes(docStyle_({ size: 8, color: "#333333", font: DOC_FONT, after: 0 }));
+  try {
+    var txt = l.editAsText();
+    var start = "Help Desk: ".length;
+    var end = l.getText().length - 1;
+    txt.setBold(start, end, true).setLinkUrl(start, end, "tel:" + HELP_DESK_PHONE);
+  } catch (e) {}
+  var r = t.getCell(0, 1).getChild(0).asParagraph();
+  r.setAttributes(docStyle_({ size: 8, italic: true, color: "#444444", font: DOC_FONT, align: DocumentApp.HorizontalAlignment.RIGHT, after: 0 }));
+}
+
+function finalizeDoc_(body) {
+  try { body.editAsText().setFontFamily(DOC_FONT); } catch (e) {}
+  try {
+    var first = body.getChild(0);
+    if (body.getNumChildren() > 1 && first.getType() === DocumentApp.ElementType.PARAGRAPH && first.asParagraph().getText() === "") {
+      first.removeFromParent();
+    }
+  } catch (e) {}
+}
+
+/* =========================================================================
+ * MANAGED (AUTO-CREATED) DOCUMENTS
+ * ========================================================================= */
+function getHubFolder_() {
+  var it = DriveApp.getFoldersByName("Chuka eFootballHub");
+  return it.hasNext() ? it.next() : DriveApp.createFolder("Chuka eFootballHub");
+}
+
+function getOrCreateManagedDoc_(propKey, title) {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty(propKey);
+  if (id) {
+    try {
+      var f = DriveApp.getFileById(id);
+      if (!f.isTrashed()) return DocumentApp.openById(id);
+    } catch (e) {
+      Logger.log("[Managed Doc] Stored doc unavailable, recreating: " + e.message);
+    }
+  }
+  var doc = DocumentApp.create(title);
+  var file = DriveApp.getFileById(doc.getId());
+  try {
+    getHubFolder_().addFile(file);
+    DriveApp.getRootFolder().removeFile(file);
+  } catch (e) { Logger.log("[Managed Doc] move failed: " + e.message); }
+  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { Logger.log("[Managed Doc] share failed: " + e.message); }
+  props.setProperty(propKey, doc.getId());
+  return doc;
+}
+
+function docUrlFromProp_(propKey) {
+  var id = PropertiesService.getScriptProperties().getProperty(propKey);
+  return id ? "https://docs.google.com/document/d/" + id + "/edit" : "";
+}
+
+function getLiveDocsInfo_() {
+  return {
+    rulesUrl: docUrlFromProp_("MASTER_RULES_DOC_ID"),
+    rosterUrl: docUrlFromProp_("LIVE_ROSTER_DOC_ID"),
+    rulesUpdatedAt: PropertiesService.getScriptProperties().getProperty("MASTER_RULES_UPDATED_AT") || "",
+    rosterUpdatedAt: PropertiesService.getScriptProperties().getProperty("LIVE_ROSTER_UPDATED_AT") || ""
+  };
+}
+
+/** Official Match Rules document: ALL rules, same look as the website document. */
+function syncMasterRulesDocument_(ss) {
+  var rules = getMatchRulesFromDatabase_(ss);
+  var doc = getOrCreateManagedDoc_("MASTER_RULES_DOC_ID", "Chuka eFootball Hub - Official Match Rules");
+  var body = doc.getBody();
+  body.clear();
+  setDocMargins_(body);
+  renderBrandHeader_(body, "Official University eFootball Esports Hub");
+  renderSectionTitle_(body, "Official Match Rules");
+  renderRulesTables_(body, rules, null);
+  renderRulesNote_(body);
+  renderDocFooter_(body);
+  finalizeDoc_(body);
+  var url = doc.getUrl();
+  doc.saveAndClose();
+  PropertiesService.getScriptProperties().setProperty("MASTER_RULES_UPDATED_AT", new Date().toISOString());
+  Logger.log("[Rules Doc] Updated: " + url);
+  return { id: doc.getId(), url: url };
+}
+
+function computeRosterSignature_(comps, regs) {
+  var parts = [];
+  for (var i = 0; i < comps.length; i++) {
+    parts.push([comps[i].CompetitionID, comps[i].Name, comps[i].Status, comps[i].MaxPlayers].join("|"));
+  }
+  for (var j = 0; j < regs.length; j++) {
+    parts.push([regs[j].RegistrationID, regs[j].Status, regs[j].PaymentStatus, regs[j].PlayerName, regs[j].eFootballUsername].join("|"));
+  }
+  return Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, parts.join("\n")));
+}
+
+function safeDisplayName_(reg) {
+  var n = String(reg.PlayerName || "").trim();
+  if (!n || n.indexOf("@") !== -1) {
+    var alt = String(reg.eFootballUsername || "").trim();
+    if (alt && alt.indexOf("@") === -1) return alt;
+    if (n.indexOf("@") !== -1) return n.split("@")[0];
+    return "Unnamed player";
+  }
+  return n;
+}
+
+function acquireSyncMutex_(key) {
+  var p = PropertiesService.getScriptProperties();
+  var t = Number(p.getProperty(key) || 0);
+  if (t && (Date.now() - t) < 5 * 60 * 1000) return false;
+  p.setProperty(key, String(Date.now()));
+  return true;
+}
+function releaseSyncMutex_(key) {
+  try { PropertiesService.getScriptProperties().deleteProperty(key); } catch (e) {}
+}
+
+/** LIVE roster: one section per competition (Knockouts first, then Leagues), by player name. */
+function syncLiveRosterDocument_(ss, force) {
+  if (!acquireSyncMutex_("ROSTER_SYNC_RUNNING")) {
+    Logger.log("[Roster Doc] Another sync is running; skipping.");
+    return { skipped: true, url: docUrlFromProp_("LIVE_ROSTER_DOC_ID") };
+  }
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var comps = getCompetitionsFromDatabase_(ss);
+    var regs = getRegistrationsFromDatabase_(ss, "");
+    var sig = computeRosterSignature_(comps, regs);
+    if (!force && props.getProperty("LIVE_ROSTER_SIG") === sig && props.getProperty("LIVE_ROSTER_DOC_ID")) {
+      return { skipped: true, unchanged: true, url: docUrlFromProp_("LIVE_ROSTER_DOC_ID") };
+    }
+
+    var byComp = {};
+    var totalVerified = 0, totalPending = 0;
+    for (var i = 0; i < regs.length; i++) {
+      var r = regs[i];
+      var st = String(r.Status || "").toUpperCase();
+      if (st === "REJECTED" || st === "CANCELLED") continue;
+      var verified = (st === "APPROVED" || String(r.PaymentStatus).toUpperCase() === "CONFIRMED" || String(r.PaymentStatus).toUpperCase() === "PAID");
+      (byComp[r.CompetitionID] = byComp[r.CompetitionID] || []).push({ reg: r, verified: verified });
+      if (verified) totalVerified++; else totalPending++;
+    }
+
+    var doc = getOrCreateManagedDoc_("LIVE_ROSTER_DOC_ID", "Chuka eFootball Hub - LIVE Registered Players");
+    var body = doc.getBody();
+    body.clear();
+    setDocMargins_(body);
+    renderBrandHeader_(body, "Live Registered Players");
+    renderSectionTitle_(body, "Live Registered Players");
+
+    var stamp = Utilities.formatDate(new Date(), "Africa/Nairobi", "EEE, d MMM yyyy 'at' HH:mm") + " EAT";
+    var meta = body.appendParagraph("Last updated: " + stamp + "  \u2022  This document refreshes automatically as players register and admins verify them.");
+    meta.setAttributes(docStyle_({ size: 8, italic: true, color: "#555555", align: DocumentApp.HorizontalAlignment.CENTER, after: 6 }));
+
+    var sum = body.appendTable([
+      ["Competitions", String(comps.length), "Verified players", String(totalVerified), "Awaiting verification", String(totalPending)]
+    ]);
+    sum.setBorderColor("#aaaaaa"); sum.setBorderWidth(0.75);
+    for (var sc = 0; sc < 6; sc++) {
+      sum.getCell(0, sc).setAttributes(docStyle_({ size: 9, bold: (sc % 2 === 0), color: "#111111", font: DOC_FONT, bg: (sc % 2 === 0) ? "#f2f2f2" : "#ffffff" }));
+    }
+
+    var groups = [
+      { type: "KNOCKOUT", title: "\uD83C\uDFC6 Knockout Tournaments" },
+      { type: "LEAGUE", title: "\uD83E\uDD47 Leagues" }
+    ];
+    var statusRank = { OPEN: 0, IN_PROGRESS: 1, CLOSED: 2, COMPLETED: 3 };
+    for (var g = 0; g < groups.length; g++) {
+      var list = comps.filter(function(c) { return String(c.CompetitionType || "").toUpperCase() === groups[g].type; });
+      list.sort(function(a, b) {
+        var ra = statusRank[a.Status] !== undefined ? statusRank[a.Status] : 9;
+        var rb = statusRank[b.Status] !== undefined ? statusRank[b.Status] : 9;
+        return ra - rb;
+      });
+      renderSubsectionTitle_(body, groups[g].title);
+      if (list.length === 0) {
+        body.appendParagraph("No " + (groups[g].type === "KNOCKOUT" ? "knockout tournaments" : "leagues") + " have been created yet.")
+          .setAttributes(docStyle_({ size: 9, italic: true, color: "#555555" }));
+        continue;
+      }
+      for (var ci = 0; ci < list.length; ci++) {
+        var c = list[ci];
+        var entries = byComp[c.CompetitionID] || [];
+        entries.sort(function(a, b) {
+          if (a.verified !== b.verified) return a.verified ? -1 : 1;
+          return String(a.reg.RegisteredAt).localeCompare(String(b.reg.RegisteredAt));
+        });
+        var vCount = entries.filter(function(e) { return e.verified; }).length;
+        var pCount = entries.length - vCount;
+
+        var h = body.appendParagraph(c.Name || c.CompetitionID);
+        h.setAttributes(docStyle_({ bold: true, size: 12, color: "#000000", before: 14, after: 0, align: DocumentApp.HorizontalAlignment.LEFT }));
+        var sub = body.appendParagraph(
+          "ID: " + c.CompetitionID + "  \u2022  Status: " + String(c.Status || "").replace(/_/g, " ") +
+          "  \u2022  Verified: " + vCount + " / " + (c.MaxPlayers || "-") + "  \u2022  Awaiting verification: " + pCount
+        );
+        sub.setAttributes(docStyle_({ bold: false, size: 8, color: "#555555", before: 0, after: 4 }));
+
+        if (entries.length === 0) {
+          body.appendParagraph("No players registered yet.").setAttributes(docStyle_({ size: 9, italic: true, color: "#555555", after: 2 }));
+          continue;
+        }
+        var rows = [["#", "Player Name", "eFootball ID / Gamer Tag", "Status"]];
+        for (var e = 0; e < entries.length; e++) {
+          rows.push([
+            String(e + 1),
+            safeDisplayName_(entries[e].reg),
+            entries[e].reg.eFootballUsername || "-",
+            entries[e].verified ? "\u2714 Verified" : "\u23F3 Pending"
+          ]);
+        }
+        var tbl = body.appendTable(rows);
+        styleDocTable_(tbl, [32, 170, 158, 90], true);
+      }
+    }
+
+    renderDocFooter_(body);
+    finalizeDoc_(body);
+    var url = doc.getUrl();
+    doc.saveAndClose();
+    props.setProperty("LIVE_ROSTER_SIG", sig);
+    props.setProperty("LIVE_ROSTER_UPDATED_AT", new Date().toISOString());
+    Logger.log("[Roster Doc] Updated: " + url);
+    return { id: doc.getId(), url: url };
+  } finally {
+    releaseSyncMutex_("ROSTER_SYNC_RUNNING");
+  }
+}
+
+/* =========================================================================
+ * QUEUED / SCHEDULED SYNC (keeps user-facing requests fast)
+ * ========================================================================= */
+function queueDocsSync_(kind) {
+  var props = PropertiesService.getScriptProperties();
+  try {
+    if (kind === "rules") props.setProperty("SYNC_RULES_PENDING", "1");
+    else props.setProperty("SYNC_ROSTER_PENDING", "1");
+    if (props.getProperty("SYNC_TRIGGER_SET") === "1") return;
+    props.setProperty("SYNC_TRIGGER_SET", "1");
+    ScriptApp.newTrigger("runQueuedDocsSync").timeBased().after(30 * 1000).create();
+  } catch (err) {
+    Logger.log("[Queue] Trigger unavailable, syncing inline: " + err.message);
+    props.deleteProperty("SYNC_TRIGGER_SET");
+    try { runQueuedDocsSync(); } catch (e2) { Logger.log("[Queue] inline sync failed: " + e2.message); }
+  }
+}
+
+function removeTriggersByHandler_(names) {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (names.indexOf(triggers[i].getHandlerFunction()) !== -1) {
+      try { ScriptApp.deleteTrigger(triggers[i]); } catch (e) {}
+    }
+  }
+}
+
+function runQueuedDocsSync() {
+  var props = PropertiesService.getScriptProperties();
+  var doRules = props.getProperty("SYNC_RULES_PENDING") === "1";
+  var doRoster = props.getProperty("SYNC_ROSTER_PENDING") === "1";
+  props.deleteProperty("SYNC_RULES_PENDING");
+  props.deleteProperty("SYNC_ROSTER_PENDING");
+  props.deleteProperty("SYNC_TRIGGER_SET");
+  try { removeTriggersByHandler_(["runQueuedDocsSync"]); } catch (e) {}
+  var ss = getDatabaseSpreadsheet_();
+  if (doRules) { try { syncMasterRulesDocument_(ss); } catch (e1) { Logger.log("[Queued Rules Sync Error] " + e1.message); } }
+  if (doRoster) { try { syncLiveRosterDocument_(ss, false); } catch (e2) { Logger.log("[Queued Roster Sync Error] " + e2.message); } }
+}
+
+/** Recurring safety-net refresh (every 10 minutes, only rewrites if data changed). */
+function scheduledLiveRefresh() {
+  var ss = getDatabaseSpreadsheet_();
+  try { syncLiveRosterDocument_(ss, false); } catch (e) { Logger.log("[Scheduled Roster Error] " + e.message); }
+}
+
+/** Installable onEdit trigger: manual edits in Sheets refresh the Docs. */
+function onSheetEditSync(e) {
+  try {
+    var name = e && e.range ? e.range.getSheet().getName() : "";
+    if (name === MATCH_RULES_SHEET_NAME) queueDocsSync_("rules");
+    else if (name === REGISTRATIONS_SHEET_NAME || name === COMPETITIONS_SHEET_NAME) queueDocsSync_("roster");
+  } catch (err) { Logger.log("[onSheetEditSync] " + err.message); }
+}
+
+/**
+ * RUN THIS ONCE from the Apps Script editor (authorize when prompted).
+ * Creates the MatchRules + Invites sheets, builds both Google Docs immediately,
+ * and installs the auto-refresh triggers.
+ */
+function setupAutomation() {
+  var ss = getDatabaseSpreadsheet_();
+  getOrCreateMatchRulesSheet_(ss);
+  getOrCreateSheet_(ss, INVITES_SHEET_NAME, INVITES_HEADERS);
+  removeTriggersByHandler_(["scheduledLiveRefresh", "onSheetEditSync"]);
+  ScriptApp.newTrigger("scheduledLiveRefresh").timeBased().everyMinutes(10).create();
+  ScriptApp.newTrigger("onSheetEditSync").forSpreadsheet(ss).onEdit().create();
+  var rules = syncMasterRulesDocument_(ss);
+  var roster = syncLiveRosterDocument_(ss, true);
+  Logger.log("=== AUTOMATION READY ===");
+  Logger.log("Official Match Rules Doc : " + rules.url);
+  Logger.log("LIVE Registered Players  : " + (roster.url || docUrlFromProp_("LIVE_ROSTER_DOC_ID")));
+  return { rulesUrl: rules.url, rosterUrl: roster.url };
+}
+
+/* =========================================================================
+ * PLAYER VERIFICATION (admin)
+ * ========================================================================= */
+function playerProfileToAdminObject_(profile) {
+  return {
+    PlayerID: profile.user_id || profile.email,
+    GoogleUID: profile.user_id,
+    DisplayName: profile.display_name,
+    Email: profile.email,
+    PhotoURL: profile.photo_url,
+    ClassID: profile.class_id,
+    Phone: profile.phone,
+    WhatsAppNumber: profile.whatsapp,
+    Status: profile.status,
+    Verified: profile.status === "ACTIVE",
+    Role: profile.role,
+    CreatedAt: profile.created_at,
+    UpdatedAt: profile.updated_at,
+    SquadImageURL: profile.squad_image_url
+  };
+}
+
+function setPlayerStatusInDatabase_(ss, playerId, newStatus, adminEmail) {
+  var target = String(playerId || "").trim();
+  if (!target) return { success: false, message: "PlayerID is required." };
+  var sheet = getOrCreateUsersSheet_(ss);
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return { success: false, message: "No players found." };
+  var lastCol = sheet.getLastColumn();
+  var raw = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var headers = raw[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
+  var cols = getUsersColumnIndices_(headers);
+  if (cols.statusCol === -1) return { success: false, message: "Users sheet has no status column." };
+
+  for (var r = 1; r < raw.length; r++) {
+    var uid = cols.uidCol !== -1 ? String(raw[r][cols.uidCol] || "").trim() : "";
+    var email = cols.emailCol !== -1 ? String(raw[r][cols.emailCol] || "").trim() : "";
+    if (uid === target || (email && email.toLowerCase() === target.toLowerCase())) {
+      var rowNum = r + 1;
+      sheet.getRange(rowNum, cols.statusCol + 1).setValue(newStatus);
+      if (cols.updatedCol !== -1) sheet.getRange(rowNum, cols.updatedCol + 1).setValue(new Date().toISOString());
+      SpreadsheetApp.flush();
+      var fresh = sheet.getRange(rowNum, 1, 1, lastCol).getValues()[0];
+      var profile = buildUserProfileObject_(fresh, cols, uid, email);
+      logAudit_(ss, adminEmail, adminEmail, newStatus === "ACTIVE" ? "PLAYER_VERIFIED" : "PLAYER_SUSPENDED", "Player", uid || email, { status: newStatus });
+      var playerObj = playerProfileToAdminObject_(profile);
+      return {
+        success: true,
+        message: newStatus === "ACTIVE" ? "Player verified and activated." : "Player suspended.",
+        player: playerObj,
+        data: { player: playerObj }
+      };
+    }
+  }
+  return { success: false, message: "Player not found: " + target };
+}
+
+/* =========================================================================
+ * INVITATIONS (Knockouts & Leagues)
+ * ========================================================================= */
+function findCompetitionById_(ss, compId) {
+  var list = getCompetitionsFromDatabase_(ss);
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].CompetitionID === compId) return list[i];
+  }
+  return null;
+}
+
+function sanitizeAppUrl_(u) {
+  u = String(u || "").trim();
+  if (!/^https?:\/\/[A-Za-z0-9.\-:_\/]+$/.test(u)) u = "";
+  if (!u) u = PropertiesService.getScriptProperties().getProperty("APP_URL") || "";
+  return u.replace(/\/+$/, "");
+}
+
+function maskEmail_(email) {
+  var e = String(email || "");
+  var at = e.indexOf("@");
+  if (at < 1) return "";
+  return e.charAt(0) + "***" + e.substring(at);
+}
+
+function inviteRowToObject_(headers, row) {
+  var o = {};
+  for (var c = 0; c < headers.length; c++) o[headers[c]] = row[c];
+  var expires = o.expires_at ? new Date(o.expires_at) : null;
+  var uses = Number(o.uses || 0);
+  var maxUses = Number(o.max_uses || 0);
+  var state = String(o.status || "ACTIVE").toUpperCase();
+  if (state !== "REVOKED") {
+    if (expires && !isNaN(expires.getTime()) && expires.getTime() < Date.now()) state = "EXPIRED";
+    else if (maxUses > 0 && uses >= maxUses) state = "USED";
+    else state = "ACTIVE";
+  }
+  return {
+    InviteID: String(o.invite_id || ""),
+    Code: String(o.code || ""),
+    CompetitionID: String(o.competition_id || ""),
+    CompetitionName: String(o.competition_name || ""),
+    CompetitionType: String(o.competition_type || ""),
+    InviteType: String(o.invite_type || "LINK"),
+    InvitedEmail: String(o.invited_email || ""),
+    InvitedByUID: String(o.invited_by_uid || ""),
+    InvitedByName: String(o.invited_by_name || ""),
+    State: state,
+    Uses: uses,
+    MaxUses: maxUses,
+    CreatedAt: String(o.created_at || ""),
+    ExpiresAt: String(o.expires_at || ""),
+    LastUsedAt: String(o.last_used_at || ""),
+    AcceptedBy: String(o.accepted_by || "")
+  };
+}
+
+function readInvites_(ss) {
+  var sheet = getOrCreateSheet_(ss, INVITES_SHEET_NAME, INVITES_HEADERS);
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return { sheet: sheet, headers: [], rows: [] };
+  var raw = sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).getValues();
+  var headers = raw[0].map(function(h) { return String(h || "").trim().toLowerCase(); });
+  var rows = [];
+  for (var r = 1; r < raw.length; r++) {
+    rows.push({ rowNum: r + 1, raw: raw[r], obj: inviteRowToObject_(headers, raw[r]) });
+  }
+  return { sheet: sheet, headers: headers, rows: rows };
+}
+
+function findInviteByCode_(ss, code) {
+  var wanted = String(code || "").trim().toUpperCase();
+  if (!wanted) return null;
+  var data = readInvites_(ss);
+  for (var i = 0; i < data.rows.length; i++) {
+    if (String(data.rows[i].obj.Code).toUpperCase() === wanted) {
+      return { sheet: data.sheet, headers: data.headers, entry: data.rows[i] };
+    }
+  }
+  return null;
+}
+
+function sendInviteEmail_(toEmail, inviterName, comp, link) {
+  try {
+    var kind = String(comp.CompetitionType).toUpperCase() === "LEAGUE" ? "League" : "Knockout Tournament";
+    var fee = comp.EntryFee !== undefined ? "KSh " + comp.EntryFee : "";
+    var prize = comp.PrizeAmount ? "KSh " + Number(comp.PrizeAmount).toLocaleString() : "";
+    var html =
+      '<div style="font-family:Georgia,serif;max-width:520px;margin:auto;border:1px solid #ccc;padding:24px">' +
+      '<h2 style="margin:0 0 4px;text-align:center;letter-spacing:1px">CHUKA eFOOTBALL</h2>' +
+      '<p style="margin:0 0 16px;text-align:center;font-size:11px;color:#555;text-transform:uppercase">Official University eFootball Esports Hub</p>' +
+      '<hr style="border:none;border-top:2px solid #222">' +
+      '<p>' + (inviterName ? inviterName : "The tournament directorate") + ' has invited you to join the <b>' + kind + ': ' + comp.Name + '</b>.</p>' +
+      (fee || prize ? '<p style="font-size:13px;color:#333">' + (fee ? "Entry fee: <b>" + fee + "</b>" : "") + (fee && prize ? " &nbsp;|&nbsp; " : "") + (prize ? "Winner prize: <b>" + prize + "</b>" : "") + '</p>' : "") +
+      '<p style="text-align:center;margin:24px 0"><a href="' + link + '" style="background:#22c55e;color:#000;padding:12px 22px;text-decoration:none;font-weight:bold;border-radius:8px">Accept Invitation</a></p>' +
+      '<p style="font-size:11px;color:#666">Sign in with this email address (' + toEmail + ') to accept. Registration is confirmed after an administrator verifies your payment.</p>' +
+      '<p style="font-size:11px;color:#666">Help Desk: ' + HELP_DESK_NAME + ' (' + HELP_DESK_PHONE + ')</p></div>';
+    MailApp.sendEmail({
+      to: toEmail,
+      subject: "You're invited: " + comp.Name + " - Chuka eFootball",
+      htmlBody: html,
+      name: "Chuka eFootball Hub"
+    });
+    return true;
+  } catch (err) {
+    Logger.log("[Invite Email Error] " + err.message);
+    return false;
+  }
+}
+
+function createInviteInDatabase_(ss, auth, body) {
+  var isAdm = isAdminAuth_(auth);
+  var compId = String(body.competitionId || body.CompetitionID || "").trim();
+  var comp = findCompetitionById_(ss, compId);
+  if (!comp) return { success: false, message: "Competition not found." };
+  var cStatus = String(comp.Status || "").toUpperCase();
+  if (!isAdm && cStatus !== "OPEN") {
+    return { success: false, message: "Only competitions with open registration can be shared." };
+  }
+  if (isAdm && (cStatus === "COMPLETED" || cStatus === "CANCELLED")) {
+    return { success: false, message: "This competition has ended and cannot accept invitations." };
+  }
+
+  var email = String(body.email || "").trim().toLowerCase();
+  if (email) {
+    if (!isAdm) return { success: false, message: "Only administrators can send email invitations." };
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { success: false, message: "Invalid email address." };
+  }
+
+  var data = readInvites_(ss);
+  if (!isAdm) {
+    var mine = 0;
+    for (var i = 0; i < data.rows.length; i++) {
+      if (data.rows[i].obj.InvitedByUID === auth.uid && data.rows[i].obj.State === "ACTIVE") mine++;
+    }
+    if (mine >= 25) return { success: false, message: "You have reached the limit of 25 active invitations. Revoke some first." };
+  }
+
+  var code = "";
+  for (var tries = 0; tries < 10; tries++) {
+    code = Utilities.getUuid().replace(/-/g, "").substring(0, 8).toUpperCase();
+    var clash = false;
+    for (var k = 0; k < data.rows.length; k++) { if (data.rows[k].obj.Code === code) { clash = true; break; } }
+    if (!clash) break;
+  }
+
+  var expiryDays = Math.max(1, Math.min(90, Number(body.expiryDays) || 14));
+  var maxUses = email ? 1 : (isAdm ? Math.max(0, Number(body.maxUses) || 0) : 0);
+  var now = new Date();
+  var expires = new Date(now.getTime() + expiryDays * 24 * 60 * 60 * 1000);
+  var inviteId = "INV-" + Date.now().toString().slice(-8);
+
+  data.sheet.appendRow([
+    inviteId, code, comp.CompetitionID, comp.Name, String(comp.CompetitionType || ""),
+    email ? "EMAIL" : "LINK", email, auth.uid, auth.displayName || auth.email || "", "ACTIVE",
+    0, maxUses, now.toISOString(), expires.toISOString(), "", ""
+  ]);
+  SpreadsheetApp.flush();
+
+  var appUrl = sanitizeAppUrl_(body.appUrl);
+  if (appUrl && !PropertiesService.getScriptProperties().getProperty("APP_URL")) {
+    PropertiesService.getScriptProperties().setProperty("APP_URL", appUrl);
+  }
+  var link = appUrl ? appUrl + "/?invite=" + code : "";
+  var emailSent = false;
+  if (email && link) emailSent = sendInviteEmail_(email, auth.displayName || "", comp, link);
+
+  logAudit_(ss, auth.uid, auth.email, "INVITE_CREATED", "Invite", inviteId, { competitionId: comp.CompetitionID, type: email ? "EMAIL" : "LINK", emailSent: emailSent });
+
+  var obj = inviteRowToObject_(INVITES_HEADERS, [
+    inviteId, code, comp.CompetitionID, comp.Name, String(comp.CompetitionType || ""),
+    email ? "EMAIL" : "LINK", email, auth.uid, auth.displayName || auth.email || "", "ACTIVE",
+    0, maxUses, now.toISOString(), expires.toISOString(), "", ""
+  ]);
+  return {
+    success: true,
+    message: email ? (emailSent ? "Invitation emailed to " + email + "." : "Invitation created. Email could not be sent - share the link manually.") : "Invite link created.",
+    invite: obj,
+    link: link,
+    emailSent: emailSent,
+    data: { invite: obj, link: link, emailSent: emailSent, message: email ? (emailSent ? "Invitation emailed to " + email + "." : "Invitation created. Email could not be sent - share the link manually.") : "Invite link created." }
+  };
+}
+
+function previewInvite_(ss, code) {
+  var found = findInviteByCode_(ss, code);
+  if (!found) return { success: true, valid: false, reason: "This invitation link is not valid.", data: { valid: false, reason: "This invitation link is not valid." } };
+  var inv = found.entry.obj;
+  var comp = findCompetitionById_(ss, inv.CompetitionID);
+  var reason = "";
+  if (inv.State === "REVOKED") reason = "This invitation has been withdrawn.";
+  else if (inv.State === "EXPIRED") reason = "This invitation has expired.";
+  else if (inv.State === "USED") reason = "This invitation has already been used.";
+  else if (!comp) reason = "The competition for this invitation no longer exists.";
+  else if (String(comp.Status).toUpperCase() !== "OPEN") reason = "Registration for this competition is not open.";
+  var out = {
+    valid: reason === "",
+    reason: reason,
+    code: inv.Code,
+    competitionId: inv.CompetitionID,
+    competitionName: inv.CompetitionName,
+    competitionType: inv.CompetitionType,
+    entryFee: comp ? comp.EntryFee : undefined,
+    prizeAmount: comp ? comp.PrizeAmount : undefined,
+    invitedBy: String(inv.InvitedByName || "").split(" ")[0],
+    restrictedTo: inv.InvitedEmail ? maskEmail_(inv.InvitedEmail) : ""
+  };
+  return { success: true, valid: out.valid, reason: out.reason, invite: out, data: out };
+}
+
+function acceptInviteInDatabase_(ss, auth, code) {
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); } catch (e) { return { success: false, message: "System is busy. Please try again." }; }
+  try {
+    var found = findInviteByCode_(ss, code);
+    if (!found) return { success: false, message: "This invitation link is not valid." };
+    var inv = found.entry.obj;
+    if (inv.State !== "ACTIVE") {
+      var msg = inv.State === "REVOKED" ? "This invitation has been withdrawn." : inv.State === "EXPIRED" ? "This invitation has expired." : "This invitation has already been used.";
+      return { success: false, message: msg };
+    }
+    if (inv.InvitedEmail && String(auth.email || "").toLowerCase() !== inv.InvitedEmail.toLowerCase()) {
+      return { success: false, message: "This invitation was sent to " + maskEmail_(inv.InvitedEmail) + ". Please sign in with that email address." };
+    }
+    var comp = findCompetitionById_(ss, inv.CompetitionID);
+    if (!comp) return { success: false, message: "The competition for this invitation no longer exists." };
+    if (String(comp.Status).toUpperCase() !== "OPEN") return { success: false, message: "Registration for this competition is not open." };
+
+    var acceptedBy = inv.AcceptedBy ? inv.AcceptedBy.split(",") : [];
+    var me = String(auth.uid || auth.email);
+    var firstTime = acceptedBy.indexOf(me) === -1;
+    if (firstTime) {
+      acceptedBy.push(me);
+      var h = found.headers;
+      var row = found.entry.rowNum;
+      found.sheet.getRange(row, h.indexOf("uses") + 1).setValue(inv.Uses + 1);
+      found.sheet.getRange(row, h.indexOf("accepted_by") + 1).setValue(acceptedBy.join(","));
+      found.sheet.getRange(row, h.indexOf("last_used_at") + 1).setValue(new Date().toISOString());
+      SpreadsheetApp.flush();
+      logAudit_(ss, auth.uid, auth.email, "INVITE_ACCEPTED", "Invite", inv.InviteID, { competitionId: comp.CompetitionID });
+    }
+
+    var regs = getRegistrationsFromDatabase_(ss, comp.CompetitionID);
+    var already = false;
+    for (var i = 0; i < regs.length; i++) {
+      var st = String(regs[i].Status).toUpperCase();
+      if ((regs[i].PlayerID === auth.uid || regs[i].PlayerID === auth.email) && st !== "REJECTED" && st !== "CANCELLED") { already = true; break; }
+    }
+    return {
+      success: true,
+      message: already ? "You are already registered for " + comp.Name + "." : "Invitation accepted. Complete your registration for " + comp.Name + ".",
+      competition: comp,
+      alreadyRegistered: already,
+      data: { competition: comp, alreadyRegistered: already, message: already ? "You are already registered for " + comp.Name + "." : "Invitation accepted. Complete your registration for " + comp.Name + "." }
+    };
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+function listInvitesFromDatabase_(ss, auth, compId) {
+  var data = readInvites_(ss);
+  var isAdm = isAdminAuth_(auth);
+  var out = [];
+  for (var i = data.rows.length - 1; i >= 0; i--) {
+    var o = data.rows[i].obj;
+    if (!isAdm && o.InvitedByUID !== auth.uid) continue;
+    if (compId && o.CompetitionID !== compId) continue;
+    out.push(o);
+    if (out.length >= 300) break;
+  }
+  return out;
+}
+
+function revokeInviteInDatabase_(ss, auth, inviteId) {
+  var data = readInvites_(ss);
+  var isAdm = isAdminAuth_(auth);
+  for (var i = 0; i < data.rows.length; i++) {
+    var o = data.rows[i].obj;
+    if (o.InviteID === String(inviteId || "").trim()) {
+      if (!isAdm && o.InvitedByUID !== auth.uid) return { success: false, message: "You can only revoke your own invitations." };
+      data.sheet.getRange(data.rows[i].rowNum, data.headers.indexOf("status") + 1).setValue("REVOKED");
+      SpreadsheetApp.flush();
+      logAudit_(ss, auth.uid, auth.email, "INVITE_REVOKED", "Invite", o.InviteID, { competitionId: o.CompetitionID });
+      return { success: true, message: "Invitation revoked." };
+    }
+  }
+  return { success: false, message: "Invitation not found." };
+}
+
+/* =========================================================================
+ * CHUKA ARENA COMMUNITY BACKEND
+ * Additive APIs for Hostels, Availability and Community.
+ * Existing authentication/login/signup is intentionally untouched.
+ * ========================================================================= */
+
+function arenaNow_(){ return new Date().toISOString(); }
+function arenaId_(prefix){ return prefix + Utilities.getUuid().replace(/-/g, '').slice(0, 20).toUpperCase(); }
+function arenaText_(v,max){ var s=String(v==null?"":v).trim(); return max && s.length>max ? s.slice(0,max) : s; }
+function arenaBool_(v){ return v===true || String(v).toLowerCase()==='true' || String(v).toLowerCase()==='yes' || String(v)==='1'; }
+function arenaNumber_(v, fallback){ var n=Number(v); return isFinite(n) ? n : fallback; }
+function arenaSheet_(ss,name,headers){ return getOrCreateSheet_(ss,name,headers); }
+function arenaRows_(sheet){
+  var lr=sheet.getLastRow(), lc=sheet.getLastColumn();
+  if(lr<2 || lc<1) return {headers:lr?sheet.getRange(1,1,1,lc).getValues()[0]:[], rows:[]};
+  var raw=sheet.getRange(1,1,lr,lc).getValues();
+  var headers=raw[0].map(function(x){return String(x||'').trim().toLowerCase();});
+  var rows=[];
+  for(var i=1;i<raw.length;i++){ var o={}; for(var j=0;j<headers.length;j++) o[headers[j]]=raw[i][j]; o.__row=i+1; rows.push(o); }
+  return {headers:headers,rows:rows};
+}
+function arenaSet_(sheet,rowObj,values){
+  var h=arenaRows_(sheet).headers, row=rowObj.__row;
+  Object.keys(values).forEach(function(k){ var idx=h.indexOf(k.toLowerCase()); if(idx!==-1) sheet.getRange(row,idx+1).setValue(values[k]); });
+}
+function arenaAppend_(sheet,values){
+  var h=arenaRows_(sheet).headers, row=h.map(function(k){return values[k]!==undefined?values[k]:'';});
+  sheet.appendRow(row); return sheet.getLastRow();
+}
+function arenaPublicHostel_(o, rooms, photos){
+  var x={
+    hostelId:String(o.hostel_id||''), name:String(o.name||''), location:String(o.location||''), customLocation:String(o.custom_location||''),
+    estimatedDistance:String(o.estimated_distance||''), distanceUnit:String(o.distance_unit||''), description:String(o.description||''),
+    wifiAvailable:arenaBool_(o.wifi_available), waterPayment:String(o.water_payment||''), electricityPayment:String(o.electricity_payment||''),
+    status:String(o.status||''), createdAt:String(o.created_at||''), updatedAt:String(o.updated_at||''), isActive:arenaBool_(o.is_active),
+    rooms:rooms||[], photos:photos||[]
+  };
+  return x;
+}
+
+function createHostelInDatabase_(ss, auth, body){
+  var name=arenaText_(body.name||body.hostelName,120);
+  var location=arenaText_(body.location,40);
+  var allowed=['Mungoni','Marine','Slaughter','Ndagani','Lowlands','Juveras','Custom'];
+  if(!name) return {success:false,message:'Hostel name is required.'};
+  if(allowed.indexOf(location)===-1) return {success:false,message:'Invalid hostel location.'};
+  var custom=location==='Custom'?arenaText_(body.customLocation,100):'';
+  if(location==='Custom'&&!custom) return {success:false,message:'Custom location is required.'};
+  var rooms=Array.isArray(body.rooms)?body.rooms:[];
+  if(!rooms.length && body.roomType) rooms=[body];
+  if(!rooms.length) return {success:false,message:'Add at least one room type.'};
+  var ssheet=arenaSheet_(ss,ARENA_HOSTELS_SHEET_NAME,ARENA_HOSTELS_HEADERS);
+  var data=arenaRows_(ssheet), norm=name.toLowerCase();
+  for(var i=0;i<data.rows.length;i++){
+    var r=data.rows[i];
+    if(String(r.name||'').trim().toLowerCase()===norm && String(r.location||'').trim().toLowerCase()===(location==='Custom'?custom:location).toLowerCase() && String(r.status||'').toUpperCase()!=='REJECTED') return {success:false,message:'A hostel with this name already exists in this location.'};
+  }
+  var now=arenaNow_(), id=arenaId_('HST_');
+  arenaAppend_(ssheet,{hostel_id:id,name:name,location:location,custom_location:custom,estimated_distance:arenaText_(body.estimatedDistance,30),distance_unit:arenaText_(body.distanceUnit||'km',10),description:arenaText_(body.description,1000),landlord_name:arenaText_(body.landlordName,100),landlord_phone:arenaText_(body.landlordPhone,30),landlord_whatsapp:arenaText_(body.landlordWhatsApp||body.landlordWhatsapp,30),caretaker_name:arenaText_(body.caretakerName,100),caretaker_phone:arenaText_(body.caretakerPhone,30),caretaker_whatsapp:arenaText_(body.caretakerWhatsApp||body.caretakerWhatsapp,30),wifi_available:arenaBool_(body.wifiAvailable),water_payment:arenaText_(body.waterPayment,30),electricity_payment:arenaText_(body.electricityPayment,30),status:'PENDING',submitted_by_uid:auth.uid,submitted_by_name:arenaText_(auth.name||auth.displayName||auth.email,100),created_at:now,updated_at:now,is_active:true});
+  var rs=arenaSheet_(ss,ARENA_HOSTEL_ROOMS_SHEET_NAME,ARENA_HOSTEL_ROOMS_HEADERS);
+  for(var j=0;j<rooms.length;j++){
+    var rt=arenaText_(rooms[j].roomType||rooms[j].type,40);
+    if(['Single Room','Bedsitter','One Bedroom'].indexOf(rt)===-1) continue;
+    arenaAppend_(rs,{room_id:arenaId_('ROOM_'),hostel_id:id,room_type:rt,monthly_rent:arenaNumber_(rooms[j].monthlyRent||rooms[j].price,''),currency:'KES',availability_status:arenaText_(rooms[j].availabilityStatus||'AVAILABLE',30).toUpperCase(),available_count:Math.max(0,Math.floor(arenaNumber_(rooms[j].availableCount||rooms[j].roomsAvailable,0))),created_at:now,updated_at:now});
+  }
+  if(isAdminAuth_(auth)) setHostelModerationStatus_(ss,auth,id,'APPROVED','Submitted by administrator.');
+  try{ logAudit_(ss,auth.uid,auth.email,'HOSTEL_SUBMITTED','Hostel',id,{status:'PENDING'}); }catch(e){}
+  return {success:true,hostelId:id,status:isAdminAuth_(auth)?'APPROVED':'PENDING',message:isAdminAuth_(auth)?'Hostel published.':'Hostel submitted for admin verification.'};
+}
+
+function setHostelModerationStatus_(ss,auth,hostelId,status,note){
+  var sh=arenaSheet_(ss,ARENA_HOSTELS_SHEET_NAME,ARENA_HOSTELS_HEADERS), d=arenaRows_(sh);
+  for(var i=0;i<d.rows.length;i++) if(String(d.rows[i].hostel_id)===String(hostelId)){
+    arenaSet_(sh,d.rows[i],{status:status,reviewed_by:auth.uid,reviewed_at:arenaNow_(),updated_at:arenaNow_(),moderation_note:arenaText_(note,500),is_active:status==='APPROVED'});
+    try{logAudit_(ss,auth.uid,auth.email,'HOSTEL_'+status,'Hostel',hostelId,{note:note||''});}catch(e){}
+    return {success:true,status:status,hostelId:hostelId};
+  }
+  return {success:false,message:'Hostel not found.'};
+}
+
+function listHostelsFromDatabase_(ss,body){
+  var hs=arenaSheet_(ss,ARENA_HOSTELS_SHEET_NAME,ARENA_HOSTELS_HEADERS), rd=arenaRows_(hs), rs=arenaSheet_(ss,ARENA_HOSTEL_ROOMS_SHEET_NAME,ARENA_HOSTEL_ROOMS_HEADERS), rrows=arenaRows_(rs).rows, ps=arenaSheet_(ss,ARENA_HOSTEL_PHOTOS_SHEET_NAME,ARENA_HOSTEL_PHOTOS_HEADERS), prows=arenaRows_(ps).rows, out=[];
+  var includePending=arenaBool_(body&&body.includePending);
+  for(var i=0;i<rd.rows.length;i++){
+    var o=rd.rows[i], st=String(o.status||'').toUpperCase(); if(!includePending && st!=='APPROVED') continue; if(st==='REJECTED') continue;
+    var rooms=rrows.filter(function(x){return String(x.hostel_id)===String(o.hostel_id);}).map(function(x){return {roomId:String(x.room_id),roomType:String(x.room_type),monthlyRent:x.monthly_rent,availabilityStatus:String(x.availability_status||''),availableCount:Number(x.available_count||0)};});
+    var photos=prows.filter(function(x){return String(x.hostel_id)===String(o.hostel_id)&&String(x.is_active).toUpperCase()!=='FALSE';}).map(function(x){return {photoId:String(x.photo_id),photoType:String(x.photo_type),imageUrl:String(x.image_url||''),caption:String(x.caption||'')};});
+    out.push(arenaPublicHostel_(o,rooms,photos));
+  }
+  return out;
+}
+
+function updateHostelAvailabilityInDatabase_(ss,auth,body){
+  var hostelId=String(body.hostelId||body.HostelID||'').trim(), roomId=String(body.roomId||body.RoomID||'').trim();
+  if(!hostelId) return {success:false,message:'Hostel ID is required.'};
+  var rs=arenaSheet_(ss,ARENA_HOSTEL_ROOMS_SHEET_NAME,ARENA_HOSTEL_ROOMS_HEADERS), rd=arenaRows_(rs), target=null;
+  for(var i=0;i<rd.rows.length;i++) if(String(rd.rows[i].hostel_id)===hostelId && (!roomId || String(rd.rows[i].room_id)===roomId)){target=rd.rows[i];break;}
+  if(!target) return {success:false,message:'Room type not found for this hostel.'};
+  var status=arenaText_(body.availabilityStatus||body.status,'FULL').toUpperCase();
+  if(['AVAILABLE','LIMITED','FULL'].indexOf(status)===-1) return {success:false,message:'Invalid availability status.'};
+  var count=Math.max(0,Math.floor(arenaNumber_(body.availableCount||body.roomsAvailable,status==='FULL'?0:0)));
+  var now=arenaNow_(); arenaSet_(rs,target,{availability_status:status,available_count:count,updated_at:now});
+  var as=arenaSheet_(ss,ARENA_HOSTEL_AVAILABILITY_SHEET_NAME,ARENA_HOSTEL_AVAILABILITY_HEADERS);
+  arenaAppend_(as,{update_id:arenaId_('HAV_'),hostel_id:hostelId,room_id:String(target.room_id),availability_status:status,available_count:count,note:arenaText_(body.note,500),contributor_uid:auth.uid,contributor_name:arenaText_(auth.name||auth.displayName||auth.email,100),created_at:now});
+  return {success:true,message:'Availability updated.',hostelId:hostelId,roomId:String(target.room_id),status:status,availableCount:count,updatedAt:now};
+}
+
+function getHostelAvailabilityFromDatabase_(ss,hostelId){
+  var as=arenaSheet_(ss,ARENA_HOSTEL_AVAILABILITY_SHEET_NAME,ARENA_HOSTEL_AVAILABILITY_HEADERS), d=arenaRows_(as), out=[];
+  for(var i=d.rows.length-1;i>=0;i--) if(String(d.rows[i].hostel_id)===String(hostelId||'')) out.push(d.rows[i]);
+  return out.slice(0,50);
+}
+
+function uploadHostelPhotoInDatabase_(ss,auth,body){
+  var hostelId=String(body.hostelId||'').trim(), data=String(body.fileData||body.base64||'').trim();
+  if(!hostelId||!data) return {success:false,message:'Hostel ID and image data are required.'};
+  if(data.length>8*1024*1024) return {success:false,message:'Image is too large.'};
+  var mime=arenaText_(body.mimeType||'image/jpeg',80); if(mime.indexOf('image/')!==0) return {success:false,message:'Only image uploads are allowed.'};
+  var raw=data.replace(/^data:[^;]+;base64,/,'');
+  var bytes=Utilities.base64Decode(raw); var blob=Utilities.newBlob(bytes,mime,arenaText_(body.fileName||('hostel-'+hostelId+'.jpg'),100));
+  var rootIt=DriveApp.getFoldersByName('Chuka Arena'); var root=rootIt.hasNext()?rootIt.next():DriveApp.createFolder('Chuka Arena');
+  var hostIt=root.getFoldersByName('Hostels'); var hostRoot=hostIt.hasNext()?hostIt.next():root.createFolder('Hostels');
+  var folderIt=hostRoot.getFoldersByName(hostelId); var folder=folderIt.hasNext()?folderIt.next():hostRoot.createFolder(hostelId);
+  var file=folder.createFile(blob); file.setName(arenaText_(body.fileName||('hostel-'+Date.now()+'.jpg'),100));
+  var ps=arenaSheet_(ss,ARENA_HOSTEL_PHOTOS_SHEET_NAME,ARENA_HOSTEL_PHOTOS_HEADERS); var now=arenaNow_();
+  arenaAppend_(ps,{photo_id:arenaId_('HPH_'),hostel_id:hostelId,photo_type:arenaText_(body.photoType||'INTERIOR',30).toUpperCase(),drive_file_id:file.getId(),image_url:file.getUrl(),caption:arenaText_(body.caption,200),uploaded_by_uid:auth.uid,created_at:now,is_active:true});
+  return {success:true,fileId:file.getId(),imageUrl:file.getUrl(),message:'Hostel photo uploaded.'};
+}
+
+function createCommunityRequestInDatabase_(ss,auth,body){
+  var title=arenaText_(body.title,120), desc=arenaText_(body.description,1500); if(!title||!desc) return {success:false,message:'Title and description are required.'};
+  var now=arenaNow_(), id=arenaId_('REQ_'); var sh=arenaSheet_(ss,ARENA_COMMUNITY_REQUESTS_SHEET_NAME,ARENA_COMMUNITY_REQUESTS_HEADERS);
+  arenaAppend_(sh,{request_id:id,title:title,description:desc,category:arenaText_(body.category||'GENERAL',40),location:arenaText_(body.location,80),contact_method:'WHATSAPP',status:'OPEN',created_by_uid:auth.uid,created_by_name:arenaText_(auth.name||auth.displayName||auth.email,100),created_at:now,updated_at:now,expires_at:body.expiresAt||'',moderation_status:'ACTIVE'});
+  return {success:true,requestId:id,status:'OPEN'};
+}
+function getCommunityRequestsFromDatabase_(ss){
+  var sh=arenaSheet_(ss,ARENA_COMMUNITY_REQUESTS_SHEET_NAME,ARENA_COMMUNITY_REQUESTS_HEADERS),d=arenaRows_(sh),out=[];
+  for(var i=d.rows.length-1;i>=0;i--){var x=d.rows[i];if(String(x.status||'').toUpperCase()!=='OPEN')continue;out.push({requestId:String(x.request_id),title:String(x.title),description:String(x.description),category:String(x.category),location:String(x.location),status:'OPEN',createdAt:String(x.created_at)});} return out;
+}
+function acceptCommunityRequestInDatabase_(ss,auth,id){
+  var sh=arenaSheet_(ss,ARENA_COMMUNITY_REQUESTS_SHEET_NAME,ARENA_COMMUNITY_REQUESTS_HEADERS),d=arenaRows_(sh);
+  for(var i=0;i<d.rows.length;i++)if(String(d.rows[i].request_id)===String(id)){
+    if(String(d.rows[i].status).toUpperCase()!=='OPEN')return {success:false,message:'This request has already been accepted or closed.'};
+    if(String(d.rows[i].created_by_uid)===String(auth.uid))return {success:false,message:'You cannot accept your own request.'};
+    var now=arenaNow_(); arenaSet_(sh,d.rows[i],{status:'ACCEPTED',accepted_by_uid:auth.uid,accepted_by_name:arenaText_(auth.name||auth.displayName||auth.email,100),accepted_at:now,updated_at:now,archived_at:now});
+    return {success:true,status:'ACCEPTED',requestId:id,message:'Request accepted. Contact the requester through WhatsApp.'};
+  } return {success:false,message:'Request not found.'};
+}
+function createRoommatePostInDatabase_(ss,auth,body){
+  var title=arenaText_(body.title||'Looking for roommate',120), loc=arenaText_(body.location,40), type=arenaText_(body.roomType,40); if(!loc||['Single Room','Bedsitter','One Bedroom'].indexOf(type)===-1)return {success:false,message:'Location and valid room type are required.'};
+  var now=arenaNow_(),id=arenaId_('RM_'); var sh=arenaSheet_(ss,ARENA_ROOMMATE_FINDER_SHEET_NAME,ARENA_ROOMMATE_FINDER_HEADERS);
+  arenaAppend_(sh,{post_id:id,title:title,description:arenaText_(body.description,1200),location:loc,hostel_id:arenaText_(body.hostelId,80),room_type:type,monthly_rent:arenaNumber_(body.monthlyRent,''),currency:'KES',contribution_amount:arenaNumber_(body.contributionAmount,''),roommates_needed:Math.max(1,Math.floor(arenaNumber_(body.roommatesNeeded,1))),current_roommates:Math.max(0,Math.floor(arenaNumber_(body.currentRoommates,1))),contact_method:'WHATSAPP',status:'ACTIVE',created_by_uid:auth.uid,created_by_name:arenaText_(auth.name||auth.displayName||auth.email,100),created_at:now,updated_at:now,expires_at:body.expiresAt||'',moderation_status:'ACTIVE'});
+  return {success:true,postId:id,status:'ACTIVE'};
+}
+function getRoommatePostsFromDatabase_(ss){
+  var d=arenaRows_(arenaSheet_(ss,ARENA_ROOMMATE_FINDER_SHEET_NAME,ARENA_ROOMMATE_FINDER_HEADERS)),out=[]; for(var i=d.rows.length-1;i>=0;i--){var x=d.rows[i];if(String(x.status).toUpperCase()!=='ACTIVE')continue;out.push({postId:String(x.post_id),title:String(x.title),description:String(x.description),location:String(x.location),roomType:String(x.room_type),monthlyRent:x.monthly_rent,contributionAmount:x.contribution_amount,roommatesNeeded:x.roommates_needed,currentRoommates:x.current_roommates,status:'ACTIVE',createdAt:String(x.created_at)});}return out;
+}
+function setOwnRoommatePostStatus_(ss,auth,id,status){var sh=arenaSheet_(ss,ARENA_ROOMMATE_FINDER_SHEET_NAME,ARENA_ROOMMATE_FINDER_HEADERS),d=arenaRows_(sh);for(var i=0;i<d.rows.length;i++)if(String(d.rows[i].post_id)===String(id)){if(String(d.rows[i].created_by_uid)!==String(auth.uid))return {success:false,message:'You can only close your own listing.'};arenaSet_(sh,d.rows[i],{status:status,updated_at:arenaNow_(),matched_at:arenaNow_()});return {success:true,status:status};}return {success:false,message:'Listing not found.'};}
+function createHookupPostInDatabase_(ss,auth,body){
+  if(!arenaBool_(body.ageConfirmed18))return {success:false,message:'You must confirm that you are 18 or older.'};
+  var about=arenaText_(body.aboutText||body.description,1200); if(!about)return {success:false,message:'Write something about the connection you are looking for.'};
+  var now=arenaNow_(),id=arenaId_('HK_'),alias='Anonymous '+id.slice(-4); var sh=arenaSheet_(ss,ARENA_HOOKUP_FINDER_SHEET_NAME,ARENA_HOOKUP_FINDER_HEADERS);
+  arenaAppend_(sh,{post_id:id,public_alias:alias,age_confirmed_18:true,age_band:arenaText_(body.ageBand,'20'),about_text:about,interests:arenaText_(body.interests,300),location_area:arenaText_(body.location,80),contact_method:'WHATSAPP',status:'ACTIVE',owner_uid:auth.uid,created_at:now,updated_at:now,expires_at:body.expiresAt||'',moderation_status:'ACTIVE'});
+  return {success:true,postId:id,publicAlias:alias,status:'ACTIVE'};
+}
+function getHookupPostsFromDatabase_(ss){var d=arenaRows_(arenaSheet_(ss,ARENA_HOOKUP_FINDER_SHEET_NAME,ARENA_HOOKUP_FINDER_HEADERS)),out=[];for(var i=d.rows.length-1;i>=0;i--){var x=d.rows[i];if(String(x.status).toUpperCase()!=='ACTIVE')continue;out.push({postId:String(x.post_id),publicAlias:String(x.public_alias),ageBand:String(x.age_band),aboutText:String(x.about_text),interests:String(x.interests),location:String(x.location_area),createdAt:String(x.created_at)});}return out;}
+function deleteOwnHookupPost_(ss,auth,id){var sh=arenaSheet_(ss,ARENA_HOOKUP_FINDER_SHEET_NAME,ARENA_HOOKUP_FINDER_HEADERS),d=arenaRows_(sh);for(var i=0;i<d.rows.length;i++)if(String(d.rows[i].post_id)===String(id)){if(String(d.rows[i].owner_uid)!==String(auth.uid))return {success:false,message:'You can only delete your own post.'};arenaSet_(sh,d.rows[i],{status:'DELETED',updated_at:arenaNow_()});return {success:true,status:'DELETED'};}return {success:false,message:'Post not found.'};}
+function createCommunityReport_(ss,auth,body){var target=String(body.targetId||'').trim(),type=arenaText_(body.targetType||'COMMUNITY',40),reason=arenaText_(body.reason,100);if(!target||!reason)return {success:false,message:'Target and reason are required.'};var sh=arenaSheet_(ss,ARENA_REPORTS_SHEET_NAME,ARENA_REPORTS_HEADERS);var id=arenaId_('REP_');arenaAppend_(sh,{report_id:id,target_type:type,target_id:target,reason:reason,details:arenaText_(body.details,1000),reporter_uid:auth.uid,reporter_name:arenaText_(auth.name||auth.displayName||auth.email,100),status:'OPEN',created_at:arenaNow_(),updated_at:arenaNow_()});return {success:true,reportId:id,status:'OPEN'};}
+
+/**
+ * CHUKA ARENA — COMMUNITY BACKEND CONSTANTS PATCH
+ *
+ * Add this file to the Apps Script project that contains
+ * ChukaArena_Code_Connected.gs.
+ *
+ * The community backend references these ARENA_* constants.
+ * The original connected backend did not declare them, which caused:
+ *
+ *   ReferenceError: ARENA_HOSTELS_SHEET_NAME is not defined
+ *
+ * This patch only defines names/headers. It does not write to Sheets.
+ */
+
+/* ---------------- HOSTELS ---------------- */
+
+var ARENA_HOSTELS_SHEET_NAME = 'Hostels';
+var ARENA_HOSTELS_HEADERS = [
+  'hostel_id',
+  'name',
+  'location',
+  'custom_location',
+  'estimated_distance',
+  'distance_unit',
+  'description',
+  'landlord_name',
+  'landlord_phone',
+  'landlord_whatsapp',
+  'caretaker_name',
+  'caretaker_phone',
+  'caretaker_whatsapp',
+  'wifi_available',
+  'water_payment',
+  'electricity_payment',
+  'status',
+  'submitted_by_uid',
+  'submitted_by_name',
+  'created_at',
+  'updated_at',
+  'reviewed_by',
+  'reviewed_at',
+  'moderation_note',
+  'is_active'
+];
+
+/* ---------------- HOSTEL ROOMS ---------------- */
+
+var ARENA_HOSTEL_ROOMS_SHEET_NAME = 'HostelRooms';
+var ARENA_HOSTEL_ROOMS_HEADERS = [
+  'room_id',
+  'hostel_id',
+  'room_type',
+  'monthly_rent',
+  'currency',
+  'availability_status',
+  'available_count',
+  'created_at',
+  'updated_at'
+];
+
+/* ---------------- HOSTEL PHOTOS ---------------- */
+
+var ARENA_HOSTEL_PHOTOS_SHEET_NAME = 'HostelPhotos';
+var ARENA_HOSTEL_PHOTOS_HEADERS = [
+  'photo_id',
+  'hostel_id',
+  'photo_type',
+  'drive_file_id',
+  'image_url',
+  'caption',
+  'uploaded_by_uid',
+  'created_at',
+  'is_active'
+];
+
+/* ---------------- HOSTEL AVAILABILITY HISTORY ---------------- */
+
+var ARENA_HOSTEL_AVAILABILITY_SHEET_NAME = 'HostelAvailability';
+var ARENA_HOSTEL_AVAILABILITY_HEADERS = [
+  'update_id',
+  'hostel_id',
+  'room_id',
+  'availability_status',
+  'available_count',
+  'note',
+  'contributor_uid',
+  'contributor_name',
+  'created_at'
+];
+
+/* ---------------- COMMUNITY HELP ---------------- */
+
+var ARENA_COMMUNITY_REQUESTS_SHEET_NAME = 'CommunityRequests';
+var ARENA_COMMUNITY_REQUESTS_HEADERS = [
+  'request_id',
+  'title',
+  'description',
+  'category',
+  'location',
+  'contact_method',
+  'status',
+  'created_by_uid',
+  'created_by_name',
+  'accepted_by_uid',
+  'accepted_by_name',
+  'created_at',
+  'updated_at',
+  'accepted_at',
+  'archived_at',
+  'expires_at',
+  'moderation_status'
+];
+
+/* ---------------- ROOMMATE FINDER ---------------- */
+
+var ARENA_ROOMMATE_FINDER_SHEET_NAME = 'RoommateFinder';
+var ARENA_ROOMMATE_FINDER_HEADERS = [
+  'post_id',
+  'title',
+  'description',
+  'location',
+  'hostel_id',
+  'room_type',
+  'monthly_rent',
+  'currency',
+  'contribution_amount',
+  'roommates_needed',
+  'current_roommates',
+  'contact_method',
+  'status',
+  'created_by_uid',
+  'created_by_name',
+  'created_at',
+  'updated_at',
+  'matched_at',
+  'expires_at',
+  'moderation_status'
+];
+
+/* ---------------- ANONYMOUS SOCIAL ---------------- */
+
+var ARENA_HOOKUP_FINDER_SHEET_NAME = 'HookupFinder';
+var ARENA_HOOKUP_FINDER_HEADERS = [
+  'post_id',
+  'public_alias',
+  'age_confirmed_18',
+  'age_band',
+  'about_text',
+  'interests',
+  'location_area',
+  'contact_method',
+  'status',
+  'owner_uid',
+  'created_at',
+  'updated_at',
+  'expires_at',
+  'moderation_status'
+];
+
+/* ---------------- REPORTS ---------------- */
+
+var ARENA_REPORTS_SHEET_NAME = 'Reports';
+var ARENA_REPORTS_HEADERS = [
+  'report_id',
+  'target_type',
+  'target_id',
+  'reason',
+  'details',
+  'reporter_uid',
+  'reporter_name',
+  'status',
+  'assigned_to',
+  'admin_note',
+  'created_at',
+  'updated_at',
+  'resolved_at'
+];
+
+/* ---------------- BLOCKS ---------------- */
+
+var ARENA_COMMUNITY_BLOCKS_SHEET_NAME = 'CommunityBlocks';
+var ARENA_COMMUNITY_BLOCKS_HEADERS = [
+  'block_id',
+  'blocker_uid',
+  'blocked_uid',
+  'created_at',
+  'is_active'
+];
+
+Logger.log('✓ Chuka Arena community backend constants loaded.');
+
+/* ============================================================
+ * CHUKA ARENA V2 — HOSTEL PROGRAM, JOBS/GIGS, TRENDS,
+ * WHATSAPP SUGGESTIONS
+ * ============================================================
+ */
+var ARENA_HOSTEL_PROGRAM_ACCESS_SHEET_NAME = 'HostelProgramAccess';
+var ARENA_HOSTEL_PROGRAM_ACCESS_HEADERS = ['access_id','uid','email','trial_started_at','trial_ends_at','payment_id','status','paid_until','updated_at'];
+var ARENA_JOBS_GIGS_SHEET_NAME = 'JobsGigs';
+var ARENA_JOBS_GIGS_HEADERS = ['job_id','title','description','category','type','location','pay_amount','currency','contact_method','contact_value','status','created_by_uid','created_by_name','created_at','updated_at','moderation_status'];
+var ARENA_TRENDS_SHEET_NAME = 'Trends';
+var ARENA_TRENDS_HEADERS = ['trend_id','title','description','image_url','drive_file_id','status','created_by','created_at','updated_at'];
+var ARENA_WHATSAPP_SUGGESTIONS_SHEET_NAME = 'WhatsAppGroupSuggestions';
+var ARENA_WHATSAPP_SUGGESTIONS_HEADERS = ['suggestion_id','name','description','group_url','submitted_by_uid','submitted_by_name','status','created_at','reviewed_by','reviewed_at','moderation_note'];
+var ARENA_HOSTEL_PROGRAM_SEMESTER_DAYS = 120;
+
+function initializeChukaArenaV2Database() {
+  var ss = getDatabaseSpreadsheet_();
+  arenaSheet_(ss, ARENA_HOSTEL_PROGRAM_ACCESS_SHEET_NAME, ARENA_HOSTEL_PROGRAM_ACCESS_HEADERS);
+  arenaSheet_(ss, ARENA_JOBS_GIGS_SHEET_NAME, ARENA_JOBS_GIGS_HEADERS);
+  arenaSheet_(ss, ARENA_TRENDS_SHEET_NAME, ARENA_TRENDS_HEADERS);
+  arenaSheet_(ss, ARENA_WHATSAPP_SUGGESTIONS_SHEET_NAME, ARENA_WHATSAPP_SUGGESTIONS_HEADERS);
+  return {success:true,message:'Chuka Arena V2 sheets initialized.'};
+}
+
+function createOrGetHostelProgramAccess_(ss, auth) {
+  var sh=arenaSheet_(ss,ARENA_HOSTEL_PROGRAM_ACCESS_SHEET_NAME,ARENA_HOSTEL_PROGRAM_ACCESS_HEADERS), d=arenaRows_(sh), now=new Date();
+  for(var i=0;i<d.rows.length;i++) if(String(d.rows[i].uid)===String(auth.uid)) return d.rows[i];
+  var start=now.toISOString(), end=new Date(now.getTime()+7*24*60*60*1000).toISOString(), id=arenaId_('HPA_');
+  arenaAppend_(sh,{access_id:id,uid:auth.uid,email:arenaText_(auth.email,160),trial_started_at:start,trial_ends_at:end,payment_id:'',status:'TRIAL',paid_until:'',updated_at:start});
+  return {access_id:id,uid:auth.uid,email:auth.email,trial_started_at:start,trial_ends_at:end,payment_id:'',status:'TRIAL',paid_until:'',updated_at:start};
+}
+function getHostelProgramStatus_(ss,auth){
+  var row=createOrGetHostelProgramAccess_(ss,auth), now=Date.now(), trialEnd=new Date(row.trial_ends_at||0).getTime(), paidEnd=new Date(row.paid_until||0).getTime();
+  var active=String(row.status).toUpperCase()==='PAID' ? paidEnd>=now : trialEnd>=now;
+  if(!active && String(row.status).toUpperCase()==='TRIAL') row.status='EXPIRED';
+  return {success:true,fee:50,currency:'KES',trialDays:7,status:active?(String(row.status).toUpperCase()==='PAID'?'PAID':'TRIAL'):'EXPIRED',trialEndsAt:String(row.trial_ends_at||''),paidUntil:String(row.paid_until||''),paymentId:String(row.payment_id||''),active:active};
+}
+function createHostelProgramPayment_(ss,auth,body){
+  var status=getHostelProgramStatus_(ss,auth); if(status.active && status.status==='PAID') return {success:false,message:'Your Hostel Program access is already paid and active.'};
+  var ref=arenaText_(body.paymentReference||body.mpesaReceiptNumber||body.reference,80); if(!ref)return {success:false,message:'Enter the M-Pesa receipt/transaction reference.'};
+  var sh=arenaSheet_(ss,PAYMENTS_SHEET_NAME,PAYMENTS_HEADERS), d=arenaRows_(sh);
+  for(var i=0;i<d.rows.length;i++) if(String(d.rows[i].player_id)===String(auth.uid) && String(d.rows[i].competition_type).toUpperCase()==='HOSTEL_PROGRAM' && String(d.rows[i].status).toUpperCase()==='PENDING') return {success:true,paymentId:String(d.rows[i].payment_id),status:'PENDING',message:'Your Hostel Program payment is already awaiting admin verification.'};
+  var id=arenaId_('PAY_'), now=arenaNow_();
+  arenaAppend_(sh,{payment_id:id,player_id:auth.uid,player_name:arenaText_(auth.name||auth.displayName||auth.email,100),competition_id:'HOSTEL_PROGRAM',competition_name:'Hostel Finder Program',competition_type:'HOSTEL_PROGRAM',amount:50,currency:'KES',payment_reference:ref,status:'PENDING',created_at:now,verified_at:'',verified_by:''});
+  var access=arenaSheet_(ss,ARENA_HOSTEL_PROGRAM_ACCESS_SHEET_NAME,ARENA_HOSTEL_PROGRAM_ACCESS_HEADERS), rows=arenaRows_(access); for(var j=0;j<rows.rows.length;j++) if(String(rows.rows[j].uid)===String(auth.uid)){arenaSet_(access,rows.rows[j],{payment_id:id,status:'PENDING',updated_at:now});break;}
+  try{logAudit_(ss,auth.uid,auth.email,'HOSTEL_PROGRAM_PAYMENT_CREATED','Payment',id,{amount:50});}catch(e){}
+  return {success:true,paymentId:id,status:'PENDING',amount:50,currency:'KES',message:'Payment recorded. Admin verification is required.'};
+}
+function activateHostelProgramPayment_(ss,paymentId,status){
+  var sh=arenaSheet_(ss,PAYMENTS_SHEET_NAME,PAYMENTS_HEADERS), d=arenaRows_(sh), target=null; for(var i=0;i<d.rows.length;i++)if(String(d.rows[i].payment_id)===String(paymentId)){target=d.rows[i];break;} if(!target)return;
+  var uid=String(target.player_id||''), access=arenaSheet_(ss,ARENA_HOSTEL_PROGRAM_ACCESS_SHEET_NAME,ARENA_HOSTEL_PROGRAM_ACCESS_HEADERS), rows=arenaRows_(access), now=new Date();
+  for(var j=0;j<rows.rows.length;j++)if(String(rows.rows[j].uid)===uid){if(status==='CONFIRMED'){var base=now.getTime();var currentPaid=new Date(rows.rows[j].paid_until||0).getTime();if(currentPaid>base)base=currentPaid;arenaSet_(access,rows.rows[j],{status:'PAID',paid_until:new Date(base+ARENA_HOSTEL_PROGRAM_SEMESTER_DAYS*24*60*60*1000).toISOString(),payment_id:paymentId,updated_at:now.toISOString()});}else{arenaSet_(access,rows.rows[j],{status:'REJECTED',payment_id:paymentId,updated_at:now.toISOString()});}break;}
+}
+
+function createJobGigInDatabase_(ss,auth,body){
+  var title=arenaText_(body.title,140), desc=arenaText_(body.description,1800); if(!title||!desc)return {success:false,message:'Job/gig title and description are required.'};
+  var type=arenaText_(body.type||'GIG',30).toUpperCase(); if(['JOB','GIG','REMOTE','FREELANCE'].indexOf(type)===-1)type='GIG';
+  var now=arenaNow_(),id=arenaId_('JOB_'),sh=arenaSheet_(ss,ARENA_JOBS_GIGS_SHEET_NAME,ARENA_JOBS_GIGS_HEADERS);
+  arenaAppend_(sh,{job_id:id,title:title,description:desc,category:arenaText_(body.category||'GENERAL',60),type:type,location:arenaText_(body.location||'Online',100),pay_amount:arenaNumber_(body.payAmount,''),currency:'KES',contact_method:arenaText_(body.contactMethod||'WHATSAPP',30),contact_value:arenaText_(body.contactValue,160),status:'PENDING',created_by_uid:auth.uid,created_by_name:arenaText_(auth.name||auth.displayName||auth.email,100),created_at:now,updated_at:now,moderation_status:'PENDING'});
+  return {success:true,jobId:id,status:'PENDING',message:'Job/gig submitted for review.'};
+}
+function getJobsGigsFromDatabase_(ss){var d=arenaRows_(arenaSheet_(ss,ARENA_JOBS_GIGS_SHEET_NAME,ARENA_JOBS_GIGS_HEADERS)),out=[];for(var i=d.rows.length-1;i>=0;i--){var x=d.rows[i];if(String(x.status).toUpperCase()!=='APPROVED')continue;out.push({jobId:String(x.job_id),title:String(x.title),description:String(x.description),category:String(x.category),type:String(x.type),location:String(x.location),payAmount:x.pay_amount,currency:String(x.currency||'KES'),contactMethod:String(x.contact_method||'WHATSAPP'),contactValue:String(x.contact_value||''),createdAt:String(x.created_at)});}return out;}
+function adminGetJobsGigsFromDatabase_(ss){var d=arenaRows_(arenaSheet_(ss,ARENA_JOBS_GIGS_SHEET_NAME,ARENA_JOBS_GIGS_HEADERS)),out=[];for(var i=d.rows.length-1;i>=0;i--){var x=d.rows[i];out.push({jobId:String(x.job_id),title:String(x.title),description:String(x.description),category:String(x.category),type:String(x.type),location:String(x.location),payAmount:x.pay_amount,currency:String(x.currency||'KES'),contactValue:String(x.contact_value||''),status:String(x.status||'PENDING'),createdBy:String(x.created_by_name||''),createdAt:String(x.created_at)});}return out;}
+function setJobGigModeration_(ss,auth,id,status,note){if(!isAdminAuth_(auth))return unauthorizedResponse_();var sh=arenaSheet_(ss,ARENA_JOBS_GIGS_SHEET_NAME,ARENA_JOBS_GIGS_HEADERS),d=arenaRows_(sh);for(var i=0;i<d.rows.length;i++)if(String(d.rows[i].job_id)===String(id)){arenaSet_(sh,d.rows[i],{status:status,moderation_status:status,updated_at:arenaNow_()});try{logAudit_(ss,auth.uid,auth.email,'JOB_GIG_'+status,'JobsGigs',id,{note:note||''});}catch(e){}return {success:true,status:status,jobId:id};}return {success:false,message:'Job/gig not found.'};}
+
+function uploadTrendInDatabase_(ss,auth,body){if(!isAdminAuth_(auth))return unauthorizedResponse_();var title=arenaText_(body.title,140),desc=arenaText_(body.description,1800);if(!title||!desc)return {success:false,message:'Trend title and description are required.'};var data=String(body.fileData||body.base64||'').trim();if(!data)return {success:false,message:'Trend image is required.'};if(data.length>10*1024*1024)return {success:false,message:'Image is too large.'};var mime=arenaText_(body.mimeType||'image/jpeg',80);if(mime.indexOf('image/')!==0)return {success:false,message:'Only image files are allowed.'};var raw=data.replace(/^data:[^;]+;base64,/,'');var blob=Utilities.newBlob(Utilities.base64Decode(raw),mime,arenaText_(body.fileName||('trend-'+Date.now()+'.jpg'),120));var it=DriveApp.getFoldersByName('Chuka Arena');var root=it.hasNext()?it.next():DriveApp.createFolder('Chuka Arena');var ti=root.getFoldersByName('Trends');var folder=ti.hasNext()?ti.next():root.createFolder('Trends');var file=folder.createFile(blob);try{file.setSharing(DriveApp.Access.ANYONE_WITH_LINK,DriveApp.Permission.VIEW);}catch(e){}var id=arenaId_('TR_'),now=arenaNow_(),url='https://drive.google.com/uc?export=view&id='+file.getId();arenaAppend_(arenaSheet_(ss,ARENA_TRENDS_SHEET_NAME,ARENA_TRENDS_HEADERS),{trend_id:id,title:title,description:desc,image_url:url,drive_file_id:file.getId(),status:'PUBLISHED',created_by:auth.email,created_at:now,updated_at:now});return {success:true,trendId:id,imageUrl:url,message:'Trend published.'};}
+function getTrendsFromDatabase_(ss){var d=arenaRows_(arenaSheet_(ss,ARENA_TRENDS_SHEET_NAME,ARENA_TRENDS_HEADERS)),out=[];for(var i=d.rows.length-1;i>=0;i--){var x=d.rows[i];if(String(x.status).toUpperCase()!=='PUBLISHED')continue;out.push({trendId:String(x.trend_id),title:String(x.title),description:String(x.description),imageUrl:String(x.image_url),createdAt:String(x.created_at)});}return out;}
+function adminDeleteTrendInDatabase_(ss,auth,id){if(!isAdminAuth_(auth))return unauthorizedResponse_();var sh=arenaSheet_(ss,ARENA_TRENDS_SHEET_NAME,ARENA_TRENDS_HEADERS),d=arenaRows_(sh);for(var i=0;i<d.rows.length;i++)if(String(d.rows[i].trend_id)===String(id)){arenaSet_(sh,d.rows[i],{status:'ARCHIVED',updated_at:arenaNow_()});return {success:true,message:'Trend archived.'};}return {success:false,message:'Trend not found.'};}
+
+function submitWhatsAppSuggestionInDatabase_(ss,auth,body){var name=arenaText_(body.name,120),desc=arenaText_(body.description,500),url=arenaText_(body.groupUrl||body.group_url,300);if(!name||!url)return {success:false,message:'Group name and WhatsApp invite link are required.'};if(url.indexOf('https://')!==0 || (url.indexOf('chat.whatsapp.com/')===-1 && url.indexOf('whatsapp.com/')===-1 && url.indexOf('wa.me/')===-1))return {success:false,message:'Use a valid HTTPS WhatsApp link.'};var id=arenaId_('WGS_'),now=arenaNow_();arenaAppend_(arenaSheet_(ss,ARENA_WHATSAPP_SUGGESTIONS_SHEET_NAME,ARENA_WHATSAPP_SUGGESTIONS_HEADERS),{suggestion_id:id,name:name,description:desc,group_url:url,submitted_by_uid:auth.uid,submitted_by_name:arenaText_(auth.name||auth.displayName||auth.email,100),status:'PENDING',created_at:now,reviewed_by:'',reviewed_at:'',moderation_note:''});return {success:true,suggestionId:id,status:'PENDING',message:'WhatsApp group suggestion sent to admin.'};}
+function getWhatsAppSuggestionsFromDatabase_(ss){var d=arenaRows_(arenaSheet_(ss,ARENA_WHATSAPP_SUGGESTIONS_SHEET_NAME,ARENA_WHATSAPP_SUGGESTIONS_HEADERS)),out=[];for(var i=d.rows.length-1;i>=0;i--){var x=d.rows[i];if(String(x.status).toUpperCase()!=='PENDING')continue;out.push({suggestionId:String(x.suggestion_id),name:String(x.name),description:String(x.description),groupUrl:String(x.group_url),submittedBy:String(x.submitted_by_name||''),createdAt:String(x.created_at)});}return out;}
+function reviewWhatsAppSuggestionInDatabase_(ss,auth,id,approve,note){if(!isAdminAuth_(auth))return unauthorizedResponse_();var sh=arenaSheet_(ss,ARENA_WHATSAPP_SUGGESTIONS_SHEET_NAME,ARENA_WHATSAPP_SUGGESTIONS_HEADERS),d=arenaRows_(sh);for(var i=0;i<d.rows.length;i++)if(String(d.rows[i].suggestion_id)===String(id)){var status=approve?'APPROVED':'REJECTED',now=arenaNow_();arenaSet_(sh,d.rows[i],{status:status,reviewed_by:auth.email,reviewed_at:now,moderation_note:arenaText_(note,500)});if(approve){var groups=getWhatsAppGroupsFromDatabase_(ss),slot=groups.length?groups.length+1:1;if(slot>3)return {success:false,message:'Official WhatsApp group slots are currently full. Add this group manually from the admin WhatsApp Groups panel.'};var sheet=getOrCreateWhatsAppGroupsSheet_(ss),raw=sheet.getDataRange().getValues(),headers=raw[0].map(function(h){return String(h).toLowerCase().trim();}),numCol=headers.indexOf('group_number');var rowToUse=-1;for(var r=1;r<raw.length;r++){if(Number(raw[r][numCol])===slot){rowToUse=r+1;break;}}if(rowToUse!==-1){var map={name:headers.indexOf('name'),description:headers.indexOf('description'),group_url:headers.indexOf('group_url'),active:headers.indexOf('active'),updated_by:headers.indexOf('updated_by'),updated_at:headers.indexOf('updated_at')};var name=String(d.rows[i].name);if(map.name>=0)sheet.getRange(rowToUse,map.name+1).setValue(name);if(map.name>=0)sheet.getRange(rowToUse,map.name+1).setValue(name);if(map.description>=0)sheet.getRange(rowToUse,map.description+1).setValue(String(d.rows[i].description||''));if(map.group_url>=0)sheet.getRange(rowToUse,map.group_url+1).setValue(String(d.rows[i].group_url));if(map.active>=0)sheet.getRange(rowToUse,map.active+1).setValue(true);if(map.updated_by>=0)sheet.getRange(rowToUse,map.updated_by+1).setValue(auth.email);if(map.updated_at>=0)sheet.getRange(rowToUse,map.updated_at+1).setValue(now);}}
+return {success:true,status:status,message:approve?'Suggestion approved.':'Suggestion rejected.'};}return {success:false,message:'Suggestion not found.'};}

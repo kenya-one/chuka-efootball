@@ -1,13 +1,23 @@
-Chuka Arena Hostel feature patch
+Chuka Arena - Updated Admin Hostel Files
 
-Copy these files into your project, preserving the folder structure:
-- src/pages/DashboardPage.tsx
+Included:
 - src/components/admin/AdminMasterHub.tsx
-- src/components/admin/AdminHostelsView.tsx (new file)
+  Adds a Hostels tab and renders AdminHostelsView.
+  No normal-user management tab was added/kept in this admin hub; the existing
+  eFootball Players section remains untouched.
+- src/components/admin/AdminHostelsView.tsx
+  Adds admin hostel moderation:
+  - load pending/reviewed hostels
+  - view hostel images/details
+  - approve/reject pending hostels
+  - update room availability (AVAILABLE/LIMITED/FULL)
+  - optional WhatsApp contact link
 
-What this patch changes:
-1. Uses Google Drive thumbnail URLs for hostel photos in the listing/detail and admin preview.
-2. Adds an Admin > Hostels section that loads submissions through the existing adminGetHostels action and offers Approve/Reject through the existing adminApproveHostel/adminRejectHostel actions.
-3. Adds a vacant-room count input and visible success/error feedback to the existing room availability buttons. Signed-in users can update status via the existing updateHostelAvailability action.
+The uploaded project already contains the Apps Script actions used by this UI:
+adminGetHostels, adminApproveHostel, adminRejectHostel, and
+updateHostelAvailability. No backend file was changed in this patch.
 
-No spreadsheet data or Apps Script backend changes are included. Your Code.gs already contains the admin approval and availability actions. The build could not be verified in this Linux workspace because the uploaded node_modules lacked platform-specific native dependencies; run npm run build in your Windows project after copying the files.
+Build note:
+I could not complete a local Vite build in the sandbox because the uploaded
+node_modules is missing its platform-specific Rolldown native binding. The
+source changes were written directly against the uploaded project.

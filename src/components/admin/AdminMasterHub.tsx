@@ -34,7 +34,6 @@ import {
 
 export type AdminSection =
   | 'overview'
-  | 'hostels'
   | 'competitions'
   | 'knockout'
   | 'league'
@@ -47,7 +46,8 @@ export type AdminSection =
   | 'audit'
   | 'announcements'
   | 'trends'
-  | 'jobs';
+  | 'jobs'
+  | 'hostels';
 
 export const AdminMasterHub: React.FC = () => {
   const { user } = useAuth();
@@ -98,7 +98,7 @@ export const AdminMasterHub: React.FC = () => {
             <span>Overview</span>
           </button>
 
-          {/* Hostel listings and approvals */}
+          {/* Hostel Moderation */}
           <button
             type="button"
             onClick={() => setActiveSection('hostels')}
@@ -278,8 +278,8 @@ export const AdminMasterHub: React.FC = () => {
         {activeSection === 'overview' && (
           <AdminOverviewView onNavigateSection={(sec) => setActiveSection(sec as AdminSection)} />
         )}
-        {activeSection === 'hostels' && <AdminHostelsView />}
         {activeSection === 'competitions' && <AdminCompetitionsView />}
+        {activeSection === 'hostels' && <AdminHostelsView />}
         {activeSection === 'knockout' && (
           <AdminKnockoutView onSelectCompetitionForFixtures={handleSelectCompetitionForFixtures} />
         )}

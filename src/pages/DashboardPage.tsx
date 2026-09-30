@@ -51,7 +51,7 @@ function hostelImageUrl(url: any) {
   const value = String(url || '').trim();
   if (!value) return '';
   const driveMatch = value.match(/(?:id=|\/d\/)([A-Za-z0-9_-]{20,})/);
-  if (driveMatch) return `https://drive.google.com/thumbnail?id=${driveMatch[1]}&sz=w1200`;
+  if (driveMatch) return `https://drive.google.com/uc?export=view&id=${driveMatch[1]}`;
   return value;
 }
 
@@ -197,12 +197,11 @@ function HostelDetail({ hostel, onClose, onUpdated }: { hostel: Hostel; onClose:
   const [room, setRoom] = useState<any>((hostel.rooms||[])[0]);
   const [saving, setSaving] = useState(false);
   const [photoIndex, setPhotoIndex] = useState(0);
-  const [availabilityMessage, setAvailabilityMessage] = useState('');
   const photos = Array.isArray(hostel.photos) ? hostel.photos : [];
   const contact = hostelContact(hostel);
   const contactName = hostel.caretakerName || hostel.landlordName || 'landlord/caretaker';
   const message = `Hello ${contactName}, I found ${hostel.name} on Chuka Arena. I would like to know more about the available rooms, rent and viewing arrangements.`;
-  const update = async (status:string) => { if(!room) return; setSaving(true); setAvailabilityMessage(''); const count=status==='FULL'?0:Math.max(0,Number(room.availableCount||0)); const r=await apiClient.post({hostelId:hostel.hostelId,roomId:room.roomId,availabilityStatus:status,availableCount:count,note:'Updated from Chuka Arena'}, {action:'updateHostelAvailability'}, {authenticated:true}); setSaving(false); if(r.success){setRoom({...room,availabilityStatus:status,availableCount:count});setAvailabilityMessage('Availability updated.');onUpdated();} else setAvailabilityMessage(r.error?.message||'Could not update availability. Please sign in and try again.'); };
+  const update = async (status:string) => { if(!room) return; setSaving(true); const r=await apiClient.post({hostelId:hostel.hostelId,roomId:room.roomId,availabilityStatus:status,availableCount:status==='FULL'?0:Number(room.availableCount||0),note:'Updated from Chuka Arena'}, {action:'updateHostelAvailability'}, {authenticated:true}); setSaving(false); if(r.success){setRoom({...room,availabilityStatus:status});onUpdated();} };
   return <div className="arena-modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}>
     <div className="arena-modal large hostel-detail-modal">
       <button className="modal-close" onClick={onClose}><X/></button>
@@ -218,7 +217,7 @@ function HostelDetail({ hostel, onClose, onUpdated }: { hostel: Hostel; onClose:
       </div>}
       {contact && <div className="hostel-contact-bar"><div><b>Contact {contactName}</b><span>Ask about rooms, rent, availability and viewing.</span></div><a className="arena-btn arena-btn-primary" href={whatsappUrl(message, contact)} target="_blank" rel="noopener noreferrer"><MessageCircle size={16}/> Request more on WhatsApp</a></div>}
       <div className="detail-grid">
-        <div><h4>Rooms & live availability</h4>{(hostel.rooms||[]).map((r:any)=><button key={r.roomId} onClick={()=>setRoom(r)} className={`room-detail ${room?.roomId===r.roomId?'selected':''}`}><span><b>{r.roomType}</b><small>{money(r.monthlyRent)} / month</small></span><Pill tone={String(r.availabilityStatus).toUpperCase()==='AVAILABLE'?'green':String(r.availabilityStatus).toUpperCase()==='LIMITED'?'amber':'red'}>{r.availabilityStatus || 'FULL'} {r.availableCount ? `· ${r.availableCount}`:''}</Pill></button>)}{room && <div className="availability-actions"><span>Update availability</span><label className="availability-count">Vacant rooms <input type="number" min="0" value={room.availableCount ?? 0} disabled={saving} onChange={e=>setRoom({...room,availableCount:Math.max(0,Number(e.target.value)||0)})}/></label><div><button disabled={saving} onClick={()=>update('AVAILABLE')}>Available</button><button disabled={saving} onClick={()=>update('LIMITED')}>Limited</button><button disabled={saving} onClick={()=>update('FULL')}>Full</button></div>{availabilityMessage && <small role="status">{availabilityMessage}</small>}</div>}</div>
+        <div><h4>Rooms & live availability</h4>{(hostel.rooms||[]).map((r:any)=><button key={r.roomId} onClick={()=>setRoom(r)} className={`room-detail ${room?.roomId===r.roomId?'selected':''}`}><span><b>{r.roomType}</b><small>{money(r.monthlyRent)} / month</small></span><Pill tone={String(r.availabilityStatus).toUpperCase()==='AVAILABLE'?'green':String(r.availabilityStatus).toUpperCase()==='LIMITED'?'amber':'red'}>{r.availabilityStatus || 'FULL'} {r.availableCount ? `· ${r.availableCount}`:''}</Pill></button>)}{room && <div className="availability-actions"><span>Update availability</span><div><button disabled={saving} onClick={()=>update('AVAILABLE')}>Available</button><button disabled={saving} onClick={()=>update('LIMITED')}>Limited</button><button disabled={saving} onClick={()=>update('FULL')}>Full</button></div></div>}</div>
         <div><h4>Hostel details</h4><div className="detail-list"><div><Wifi/><span>Wi‑Fi<b>{hostel.wifiAvailable ? 'Available':'Not listed'}</b></span></div><div><Droplets/><span>Water<b>{hostel.waterPayment || 'Not listed'}</b></span></div><div><Zap/><span>Electricity<b>{hostel.electricityPayment || 'Not listed'}</b></span></div><div><Phone/><span>Care contact<b>{contactName}</b></span></div></div>{hostel.description && <p className="detail-description">{hostel.description}</p>}</div>
       </div>
       <div className="modal-footer-note"><Clock3 size={14}/> Availability is community-updated and should be confirmed before paying or moving in.</div>
@@ -404,14 +403,35 @@ function MarketplaceView() {
 
 function Shell({ active, setActive, children, onAdmin }: { active:DashboardTab; setActive:(t:DashboardTab)=>void; children:React.ReactNode; onAdmin:()=>void }) {
   const { user, signOut } = useAuth(); const { isAdmin } = useAdmin(); const [mobile,setMobile]=useState(false);
-  const nav=[['home','Home',Home],['efootball','eFootball',Gamepad2],['hostels','Hostels',House],['community','Community',Users],['marketplace','Marketplace',Store],['profile','Profile',UserRound]] as const;
-  return <div className="arena-app"><div className="arena-bg"/><header className="arena-header"><div className="arena-brand"><img src={CHUKA_CREST_URL} onError={e=>{e.currentTarget.src=CHUKA_CREST_FALLBACK}} alt="Chuka"/><div><b>CHUKA <span>ARENA</span></b><small>Student community platform</small></div></div><nav className="arena-nav">{nav.map(([id,label,Icon])=><button key={id} className={active===id?'active':''} onClick={()=>setActive(id)}><Icon size={16}/>{label}</button>)}</nav><div className="arena-user"><button className="avatar" onClick={()=>setActive('profile')}>{user?.photoURL?<img src={user.photoURL} alt=""/>:<span>{(user?.displayName||'U').slice(0,1).toUpperCase()}</span>}</button><div className="user-meta"><b>{user?.displayName||'Student'}</b><span>{isAdmin?'Administrator':'Chuka student'}</span></div>{isAdmin&&<button className="admin-mini" onClick={onAdmin}><Shield size={14}/></button>}<button className="logout-mini" onClick={signOut} title="Sign out"><LogOut size={16}/></button><button className="mobile-menu" onClick={()=>setMobile(!mobile)}>{mobile?<X/>:<Menu/>}</button></div></header>{mobile&&<div className="mobile-nav">{nav.map(([id,label,Icon])=><button key={id} className={active===id?'active':''} onClick={()=>{setActive(id);setMobile(false)}}><Icon size={17}/>{label}</button>)}{isAdmin&&<button onClick={onAdmin}><Shield size={17}/> Admin</button>}</div>}<main className="arena-main"><OfficialBrandBanner theme="dark" variant="compact" className="arena-brand-banner"/>{children}</main><footer className="arena-footer"><span>Chuka Arena · Student-first digital hub</span><span>Google Sheets + Apps Script backend · WhatsApp community layer</span></footer></div>;
+  const studentNav=[['home','Home',Home],['efootball','eFootball',Gamepad2],['hostels','Hostels',House],['community','Community',Users],['marketplace','Marketplace',Store],['profile','Profile',UserRound]] as const;
+  const nav = isAdmin ? [] : studentNav;
+  const handleNavigate = (tab: DashboardTab) => {
+    if (isAdmin) { onAdmin(); return; }
+    setActive(tab);
+  };
+  return <div className="arena-app"><div className="arena-bg"/><header className="arena-header"><div className="arena-brand"><img src={CHUKA_CREST_URL} onError={e=>{e.currentTarget.src=CHUKA_CREST_FALLBACK}} alt="Chuka"/><div><b>CHUKA <span>ARENA</span></b><small>{isAdmin ? 'Administrator console' : 'Student community platform'}</small></div></div><nav className="arena-nav">{nav.map(([id,label,Icon])=><button key={id} className={active===id?'active':''} onClick={()=>handleNavigate(id)}><Icon size={16}/>{label}</button>)}</nav><div className="arena-user">{!isAdmin&&<button className="avatar" onClick={()=>setActive('profile')}>{user?.photoURL?<img src={user.photoURL} alt=""/>:<span>{(user?.displayName||'U').slice(0,1).toUpperCase()}</span>}</button>}<div className="user-meta"><b>{user?.displayName||'Administrator'}</b><span>{isAdmin?'Administrator':'Chuka student'}</span></div>{isAdmin&&<button className="admin-mini" onClick={onAdmin} title="Open Admin Console"><Shield size={14}/></button>}<button className="logout-mini" onClick={signOut} title="Sign out"><LogOut size={16}/></button>{!isAdmin&&<button className="mobile-menu" onClick={()=>setMobile(!mobile)}>{mobile?<X/>:<Menu/>}</button>}</div></header>{mobile&&!isAdmin&&<div className="mobile-nav">{nav.map(([id,label,Icon])=><button key={id} className={active===id?'active':''} onClick={()=>{setActive(id);setMobile(false)}}><Icon size={17}/>{label}</button>)}</div>}<main className="arena-main"><OfficialBrandBanner theme="dark" variant="compact" className="arena-brand-banner"/>{children}</main><footer className="arena-footer"><span>{isAdmin ? 'Chuka Arena · Administrator console' : 'Chuka Arena · Student-first digital hub'}</span><span>{isAdmin ? 'Approval, moderation and platform administration' : 'Google Sheets + Apps Script backend · WhatsApp community layer'}</span></footer></div>;
 }
 
 export const DashboardPage: React.FC = () => {
   const [active,setActive]=useState<DashboardTab>('home'); const { isAdmin }=useAdmin(); const auth = useAuth(); const { player, setPlayerData } = usePlayer();
-  useEffect(()=>{const hash=window.location.hash.replace('#',''); if(['home','efootball','hostels','community','marketplace','profile'].includes(hash))setActive(hash as DashboardTab);},[]);
-  const navigate=(tab:DashboardTab)=>{setActive(tab);window.history.replaceState({},'',`#${tab}`);window.scrollTo({top:0,behavior:'smooth'});};
+  useEffect(()=>{
+    if (isAdmin) {
+      setActive('admin');
+      window.history.replaceState({},'', '#admin');
+      return;
+    }
+    const hash=window.location.hash.replace('#','');
+    if(['home','efootball','hostels','community','marketplace','profile'].includes(hash))setActive(hash as DashboardTab);
+  },[isAdmin]);
+  const navigate=(tab:DashboardTab)=>{
+    if (isAdmin) {
+      setActive('admin');
+      window.history.replaceState({},'', '#admin');
+      window.scrollTo({top:0,behavior:'smooth'});
+      return;
+    }
+    setActive(tab);window.history.replaceState({},'',`#${tab}`);window.scrollTo({top:0,behavior:'smooth'});
+  };
   const { user, signInWithGoogle, signOut } = auth;
   let content:React.ReactNode;
   if(active==='home')content=<HomeView onNavigate={navigate}/>;

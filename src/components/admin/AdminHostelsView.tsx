@@ -43,12 +43,72 @@ type Hostel = {
   photos?: Photo[];
 };
 
-function imageUrl(value?: string) {
+function driveFileId(value?: string) {
   const url = String(value || '').trim();
   if (!url) return '';
-  const match = url.match(/(?:id=|\/d\/)([A-Za-z0-9_-]{20,})/);
-  return match ? `https://drive.google.com/thumbnail?id=${match[1]}&sz=w800` : url;
+  const patterns = [
+    /[?&]id=([A-Za-z0-9_-]{10,})/,
+    /\/d\/([A-Za-z0-9_-]{10,})/,
+    /googleusercontent\.com\/d\/([A-Za-z0-9_-]{10,})/,
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return '';
 }
+
+function imageCandidates(value?: string) {
+  const url = String(value || '').trim();
+  if (!url) return [];
+  const id = driveFileId(url);
+  const candidates = [url];
+  if (id) {
+    candidates.push(
+      `https://drive.google.com/thumbnail?id=${id}&sz=w1200`,
+      `https://lh3.googleusercontent.com/d/${id}=w1200`,
+      `https://drive.google.com/uc?export=view&id=${id}`,
+    );
+  }
+  return [...new Set(candidates)];
+}
+
+function imageUrl(value?: string) {
+  return imageCandidates(value)[0] || '';
+}
+
+const DriveImage: React.FC<{
+  src?: string;
+  alt: string;
+  className?: string;
+  loading?: 'lazy' | 'eager';
+}> = ({ src, alt, className = '', loading = 'lazy' }) => {
+  const sources = imageCandidates(src);
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    setIndex(0);
+  }, [src]);
+
+  if (!sources.length || index >= sources.length) {
+    return (
+      <div className={`flex h-full w-full items-center justify-center bg-black/30 text-gray-500 ${className}`}>
+        <ImageIcon className="h-7 w-7" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={sources[index]}
+      alt={alt}
+      className={className}
+      loading={loading}
+      referrerPolicy="no-referrer"
+      onError={() => setIndex(current => current + 1)}
+    />
+  );
+};
 
 function contactFor(hostel: Hostel) {
   return hostel.landlordWhatsapp ||
@@ -328,12 +388,10 @@ function HostelModerationCard({
           title="View hostel images and details"
         >
           {firstImage ? (
-            <img
+            <DriveImage
               src={firstImage}
               alt={`${hostel.name || 'Hostel'} preview`}
               className="w-full h-full object-cover"
-              loading="lazy"
-              referrerPolicy="no-referrer"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-gray-500">
@@ -486,11 +544,11 @@ function HostelPreview({
         {photos.length > 0 ? (
           <div className="space-y-2">
             <div className="h-80 rounded-2xl overflow-hidden bg-black/30 border border-white/10">
-              <img
-                src={imageUrl(photos[index]?.imageUrl)}
+              <DriveImage
+                src={photos[index]?.imageUrl}
                 alt={photos[index]?.caption || `${hostel.name || 'Hostel'} image ${index + 1}`}
                 className="w-full h-full object-contain"
-                referrerPolicy="no-referrer"
+                loading="eager"
               />
             </div>
             {photos.length > 1 && (
@@ -502,12 +560,10 @@ function HostelPreview({
                     onClick={() => setIndex(i)}
                     className={`w-20 h-16 rounded-lg overflow-hidden border ${i === index ? 'border-emerald-400' : 'border-white/10'}`}
                   >
-                    <img
-                      src={imageUrl(photo.imageUrl)}
-                      alt=""
+                    <DriveImage
+                      src={photo.imageUrl}
+                      alt={photo.caption || ''}
                       className="w-full h-full object-cover"
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
                     />
                   </button>
                 ))}

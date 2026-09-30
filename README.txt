@@ -1,23 +1,27 @@
-Chuka Arena - Updated Admin Hostel Files
+CHUKA ARENA - ADMIN-ONLY DASHBOARD ROUTING UPDATE
 
-Included:
+Files:
+- src/pages/DashboardPage.tsx
 - src/components/admin/AdminMasterHub.tsx
-  Adds a Hostels tab and renders AdminHostelsView.
-  No normal-user management tab was added/kept in this admin hub; the existing
-  eFootball Players section remains untouched.
 - src/components/admin/AdminHostelsView.tsx
-  Adds admin hostel moderation:
-  - load pending/reviewed hostels
-  - view hostel images/details
-  - approve/reject pending hostels
-  - update room availability (AVAILABLE/LIMITED/FULL)
-  - optional WhatsApp contact link
 
-The uploaded project already contains the Apps Script actions used by this UI:
-adminGetHostels, adminApproveHostel, adminRejectHostel, and
-updateHostelAvailability. No backend file was changed in this patch.
+What changed:
+- Admin accounts are routed directly to #admin.
+- Admin accounts no longer see the normal student navigation: Home, eFootball, Hostels, Community, Marketplace, Profile.
+- Admin accounts see the Admin Console only, plus logout/admin controls.
+- Normal student accounts keep the existing student navigation and features.
+- The Admin Console keeps the existing administration tools and the Hostel approval section.
+- No normal student user/profile data or Firebase/Apps Script user backend was removed.
 
-Build note:
-I could not complete a local Vite build in the sandbox because the uploaded
-node_modules is missing its platform-specific Rolldown native binding. The
-source changes were written directly against the uploaded project.
+Install:
+1. Extract this ZIP into the project root and replace the matching files.
+2. Run: npm run build
+3. Run: npm run dev
+4. Test with an admin account and a normal student account.
+
+Git:
+After the local build passes:
+  git status
+  git add src/pages/DashboardPage.tsx src/components/admin/AdminMasterHub.tsx src/components/admin/AdminHostelsView.tsx
+  git commit -m "Make admin dashboard admin-only"
+  git push origin index

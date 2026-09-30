@@ -6,6 +6,7 @@ import {
   Image as ImageIcon,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   XCircle,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
@@ -195,6 +196,32 @@ export const AdminHostelsView: React.FC = () => {
     }
   };
 
+  const deleteHostel = async (hostel: Hostel) => {
+    const confirmed = window.confirm(`Delete ${hostel.name || 'this hostel'}? It will be removed from the public hostel directory.`);
+    if (!confirmed) return;
+    setBusyId(hostel.hostelId);
+    setError('');
+    setNotice('');
+    try {
+      const r = await apiClient.post(
+        { hostelId: hostel.hostelId, note: 'Deleted from Chuka Arena Admin' },
+        { action: 'adminDeleteHostel' },
+        { authenticated: true }
+      );
+      if (r.success) {
+        setNotice(`${hostel.name || 'Hostel'} deleted successfully.`);
+        if (selected?.hostelId === hostel.hostelId) setSelected(null);
+        await load();
+      } else {
+        setError(r.error?.message || 'Could not delete this hostel.');
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Delete request failed.');
+    } finally {
+      setBusyId('');
+    }
+  };
+
   const updateAvailability = async (
     hostel: Hostel,
     room: Room,
@@ -313,6 +340,7 @@ export const AdminHostelsView: React.FC = () => {
                     onOpen={() => setSelected(hostel)}
                     onApprove={() => moderate(hostel, true)}
                     onReject={() => moderate(hostel, false)}
+                    onDelete={() => deleteHostel(hostel)}
                     onAvailability={updateAvailability}
                   />
                 ))}
@@ -336,6 +364,7 @@ export const AdminHostelsView: React.FC = () => {
                   onOpen={() => setSelected(hostel)}
                   onApprove={() => moderate(hostel, true)}
                   onReject={() => moderate(hostel, false)}
+                  onDelete={() => deleteHostel(hostel)}
                   onAvailability={updateAvailability}
                 />
               ))}
@@ -361,6 +390,7 @@ function HostelModerationCard({
   onOpen,
   onApprove,
   onReject,
+  onDelete,
   onAvailability,
 }: {
   hostel: Hostel;
@@ -368,6 +398,7 @@ function HostelModerationCard({
   onOpen: () => void;
   onApprove: () => void;
   onReject: () => void;
+  onDelete: () => void;
   onAvailability: (
     hostel: Hostel,
     room: Room,
@@ -473,6 +504,16 @@ function HostelModerationCard({
               </a>
             )}
 
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onDelete}
+              className="px-3 py-2 rounded-xl border border-red-500/30 bg-red-500/10 text-red-200 text-sm font-black hover:bg-red-500/20 disabled:opacity-50"
+            >
+              <Trash2 className="w-4 h-4 inline mr-1.5" />
+              Delete
+            </button>
+
             {status === 'PENDING' && (
               <>
                 <button
@@ -482,7 +523,7 @@ function HostelModerationCard({
                   className="px-3 py-2 rounded-xl bg-emerald-500 text-black text-sm font-black hover:bg-emerald-400 disabled:opacity-50"
                 >
                   <ShieldCheck className="w-4 h-4 inline mr-1.5" />
-                  Approve
+                  Verify
                 </button>
                 <button
                   type="button"
